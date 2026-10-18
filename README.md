@@ -6,9 +6,10 @@ workflows like booking appointments or creating CRM records.
 
 **Current state: Phase 0 (auth, organizations/workspaces, dashboard shell)
 plus Phase 1 (real inbound calling — Twilio + Vapi, call history,
-transcripts).** Appointment booking, CRM integration, outbound campaigns,
-billing, and a public API are NOT implemented — see "What has NOT been
-implemented yet" below.
+transcripts) and a Google Calendar integration for real availability and
+appointment creation.** CRM integration, outbound campaigns, billing, and
+a public API are NOT implemented — see "What has NOT been implemented yet"
+below.
 
 ## Tech stack
 
@@ -34,6 +35,7 @@ app/
                                          around the service layer)
   api/voice/twilio/inbound/route.ts   — Twilio inbound-call webhook
   api/voice/vapi/events/route.ts      — Vapi server-message webhook
+  api/calendar/google/                — per-workspace Google OAuth connection
   layout.tsx, page.tsx                — root layout + "/" redirect
 components/
   ui/                                  — Button, Input, Label, Card, FieldError
@@ -52,6 +54,8 @@ server/
                                           appointment, job, analytics
   validation/                          — Zod schemas
   integrations/
+    google/calendar.ts, oauth.ts        — encrypted credentials, OAuth,
+                                           FreeBusy and event creation
     twilio/verify.ts, twiml.ts,        — signature verification, TwiML
       sms.ts, transfer.ts                helpers, SMS send, live-call transfer
     vapi/client.ts, assistant.ts,      — REST client, assistant sync,
@@ -163,11 +167,11 @@ real external systems and are the most abuse-sensitive:
   no destination field, so there's nothing for a rogue payload to
   override even if it tried.
 
-`check_availability`/`book_appointment` and `create_job` are intentionally
-minimal stand-ins, not real integrations — see the "Not implemented yet"
-section and the comment at the top of `db/schema.ts`'s customers/
-appointments/jobs block for exactly what's simplified (fixed business
-hours, no external calendar, no external CRM).
+`check_availability` and `book_appointment` use the workspace's connected
+Google primary calendar for busy-time checks and event creation. The
+appointment records remain in our database too; availability is limited to
+the existing fixed 9am-5pm UTC schedule. `customers` and `jobs` are still
+internal records, not a real CRM integration.
 
 ### Two rules the whole codebase is built around
 
@@ -206,6 +210,7 @@ anywhere.
 | Table               | Purpose                                                                 | Key constraints |
 |----------------------|--------------------------------------------------------------------------|------------------|
 | `organizations`     | A tenant/workspace.                                                     | `slug` unique |
+| `google_calendar_integrations` | One encrypted Google refresh token per organization.             | unique `organization_id`; cascade delete |
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
 | `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, `vapi_assistant_id`. | `organization_id` cascade delete; `status` enum |
@@ -214,7 +219,7 @@ anywhere.
 | `call_transcripts`   | Transcript lines. `sequence_number` is assigned by US (not the provider) so display order survives out-of-order webhook delivery. Only "final" transcript chunks are persisted — partials are filtered as noise. | unique `(call_id, sequence_number)`; cascade delete |
 | `webhook_events`     | Idempotency ledger for provider webhooks. `external_event_id` is a dedupe key WE derive (Twilio: the CallSid; Vapi: call id + message type + a hash of the payload) — neither provider hands us a documented stable event id. | unique `(provider, external_event_id)` |
 | `customers`          | Minimal customer record for the `get_customer`/`create_customer` tools. NOT a real CRM. | unique `(organization_id, phone)` |
-| `appointments`       | Backs `check_availability`/`book_appointment`. Availability is computed against this table on a fixed, hardcoded business-hours schedule (9am-5pm, org-wide) — NOT a real calendar integration. | `organization_id`/`customer_id`/`agent_id` cascade delete; `call_id` nullable, `ON DELETE SET NULL` |
+| `appointments`       | Local record corresponding to a booking created in the organization's Google primary calendar. | `organization_id`/`customer_id`/`agent_id` cascade delete; `google_event_id` stores the calendar event |
 | `jobs`               | Backs `create_job` — an internal work-order record, not a connection to any external job-management/CRM system. | `customer_id` cascade delete; `appointment_id` nullable, `ON DELETE SET NULL` |
 | `tool_executions`    | Execution ledger for every tool call an agent makes — input, output or error, status, duration. This is what "log execution" means concretely; see `server/tools/executor.ts`. | indexed on `call_id` |
 
@@ -241,6 +246,9 @@ cp .env.example .env
 | `TWILIO_AUTH_TOKEN`    | voice              | Twilio Console -> Account. Used only to verify `X-Twilio-Signature` |
 | `VAPI_PRIVATE_API_KEY` | voice              | Vapi dashboard -> API Keys |
 | `VAPI_WEBHOOK_SECRET`  | voice              | A secret you choose — see step 5 below |
+| `GOOGLE_CLIENT_ID`     | calendar           | Google Cloud OAuth 2.0 Web application client |
+| `GOOGLE_CLIENT_SECRET` | calendar           | Google Cloud OAuth 2.0 Web application secret |
+| `CALENDAR_TOKEN_ENCRYPTION_KEY` | calendar   | Base64-encoded 32-byte AES-256-GCM key for refresh tokens |
 
 No real secrets are committed anywhere in this repo; `.env` is gitignored.
 
@@ -299,17 +307,38 @@ automated account setup. You need to do the following yourself:
    number ID from step 3, and assign it to the agent.
 6. Call the number.
 
-### 6. Run tests
+### 6. Connect Google Calendar (optional for inbound calls; required for booking tools)
+
+1. In Google Cloud, enable the Google Calendar API and create an OAuth 2.0
+   **Web application** client. Add `${APP_URL}/api/calendar/google/callback`
+   as an authorized redirect URI.
+2. Add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a unique
+   `CALENDAR_TOKEN_ENCRYPTION_KEY` to `.env`. Generate the encryption key
+   with:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   ```
+
+3. Apply the schema with `npm run db:push`.
+4. Sign in as a workspace owner or admin, open **Settings**, and select
+   **Connect Google Calendar**. The integration uses the Google account's
+   primary calendar, checks its busy periods, and creates an event for each
+   confirmed booking. The existing business-hours window remains 9am-5pm
+   UTC. Calendar tools report an error if no calendar is connected; they do
+   not silently fall back to local-only availability.
+
+### 7. Run tests
 
 ```bash
 npm test
 ```
 
-69 tests, no live database or provider credentials needed — everything
-runs against an in-memory Postgres (pglite) and, for the provider
-verification tests, hand-computed signatures/secrets.
+Tests need no live database or provider credentials: service tests use an
+in-memory Postgres (pglite), and provider integrations use controlled HTTP
+responses and signature fixtures.
 
-### 7. Type-check and build
+### 8. Type-check and build
 
 ```bash
 npm run typecheck   # next typegen && tsc --noEmit
@@ -318,9 +347,8 @@ npm run build
 
 ## What has NOT been implemented yet
 
-- Real appointment/calendar integration (Google Calendar, Outlook, etc.) —
-  `check_availability`/`book_appointment` work only against our own
-  `appointments` table on a fixed business-hours schedule
+- Configurable business hours and time zones for appointment availability
+- Calendar provider alternatives (for now, only Google Calendar is supported)
 - Real CRM integration — `customers`/`jobs` are internal records only
 - A generic, user-configurable workflow engine
 - Outbound campaigns, campaign queues, Redis, BullMQ
@@ -355,7 +383,12 @@ npm run build
 
 - `npx tsc --noEmit` (via `npm run typecheck`): **passes, zero errors**, no
   `any`/`@ts-ignore`/`@ts-expect-error` anywhere in the code.
-- `npm test` (Vitest): **100/100 tests passing**, across:
+- Focused calendar validation for this change: **9 tests passing** across
+  `tests/server/google-calendar.test.ts` and selected tests in
+  `tests/server/tools-crm.test.ts`. The full suite was not rerun for this
+  change; a previous full run in this environment hit a fatal memory
+  allocation error and a session-token test timeout.
+- Earlier project test coverage includes:
   - Phase 0: password hashing, session tokens, registration/login,
     organization membership + role enforcement, agent CRUD + tenant
     isolation.
@@ -399,10 +432,12 @@ npm run build
   `app/layout.tsx`); the build was verified with system fonts swapped in
   temporarily, then the real font import was restored for the delivered
   code. This will build as-is with normal internet access.
-- **Not verified — no live Twilio/Vapi credentials were available in this
+- **Not verified — no live Twilio/Vapi/Google credentials were available in this
   environment:** the actual `send_sms` Twilio Messages API call, the
-  actual `transfer_call` Twilio call-redirect API call, and the full
-  Twilio→webhook→Vapi-bypass round trip (same caveat as Phase 1). The
+  actual `transfer_call` Twilio call-redirect API call, the full
+  Twilio→webhook→Vapi-bypass round trip, and the Google OAuth/Calendar
+  round trip. Google Calendar behavior is tested with mocked OAuth and
+  Calendar API responses, not a real Google account. The
   request shapes for the SMS send and call-transfer APIs were verified
   against current Twilio documentation before implementing (both are
   long-stable, well-documented APIs: `client.messages.create` and
@@ -430,7 +465,7 @@ npm run build
     `customer.number`, reading back `phoneCallProviderDetails.twiml`)
     matches Vapi's own support-provided example for this exact
     Twilio-inbound-to-Vapi pattern.
-  - **What could NOT be verified**: no live Twilio or Vapi account was
+  - **What could NOT be verified**: no live Twilio, Vapi, or Google account was
     available in this environment, so the actual HTTP round-trip to
     `POST https://api.vapi.ai/call` (and `/assistant`) has not been
     exercised against a real account. The request/response shapes are
