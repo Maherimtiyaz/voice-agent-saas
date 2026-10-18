@@ -6,18 +6,27 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Button } from "@/components/ui/button";
 import { requireCurrentContext } from "@/server/auth/current-user";
 import {
+  disconnectHubSpot,
+} from "@/app/actions/hubspot.actions";
+import {
   getOrganization,
   listOrganizationMembers,
 } from "@/server/services/organization.service";
 import { disconnectGoogleCalendar } from "@/app/actions/calendar.actions";
+import { getHubSpotConnectionStatus } from "@/server/integrations/hubspot/client";
 
 export const metadata: Metadata = {
   title: "Settings",
 };
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ crm?: string; calendar?: string }>;
+}) {
   const { user, organizationId, role } = await requireCurrentContext();
-  const [organization, members, calendarConnection] = await Promise.all([
+  const [{ crm }, organization, members, calendarConnection, hubspotConnection] = await Promise.all([
+    searchParams,
     getOrganization(db, { organizationId, userId: user.id }),
     listOrganizationMembers(db, { organizationId, userId: user.id }),
     db
@@ -25,8 +34,10 @@ export default async function SettingsPage() {
       .from(googleCalendarIntegrations)
       .where(eq(googleCalendarIntegrations.organizationId, organizationId))
       .limit(1),
+    getHubSpotConnectionStatus(db, organizationId),
   ]);
   const isCalendarConnected = calendarConnection.length > 0;
+  const canManageIntegrations = role === "owner" || role === "admin";
 
   return (
     <div className="flex flex-col gap-6">
@@ -34,6 +45,47 @@ export default async function SettingsPage() {
         <h1 className="text-xl font-semibold text-foreground">Settings</h1>
         <p className="text-sm text-muted">Workspace details and members.</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>HubSpot CRM</CardTitle>
+          <CardDescription>
+            {hubspotConnection
+              ? "Connected. Voice agents sync customers as contacts and work orders as associated deals."
+              : "Connect HubSpot to sync customers as contacts and work orders as associated deals. Local records continue to work if it is disconnected."}
+          </CardDescription>
+          {crm === "connected" && (
+            <p role="status" className="text-sm text-success">HubSpot connected successfully.</p>
+          )}
+          {crm === "cancelled" && (
+            <p role="status" className="text-sm text-muted">HubSpot connection was cancelled.</p>
+          )}
+          {crm === "error" && (
+            <p role="alert" className="text-sm text-danger">HubSpot could not be connected. Check app configuration and try again.</p>
+          )}
+        </CardHeader>
+        <div className="flex items-center gap-3">
+          {hubspotConnection ? (
+            <>
+              <span className="text-sm font-medium text-foreground">Connected</span>
+              {canManageIntegrations && (
+                <form action={disconnectHubSpot}>
+                  <Button type="submit" variant="secondary">Disconnect</Button>
+                </form>
+              )}
+            </>
+          ) : canManageIntegrations ? (
+            <a
+              href="/api/crm/hubspot/connect"
+              className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"
+            >
+              Connect HubSpot
+            </a>
+          ) : (
+            <span className="text-sm text-muted">An owner or admin must connect HubSpot.</span>
+          )}
+        </div>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -67,14 +119,14 @@ export default async function SettingsPage() {
           {isCalendarConnected ? (
             <>
               <span className="text-sm font-medium text-foreground">Connected to primary calendar</span>
-              {(role === "owner" || role === "admin") && (
+              {canManageIntegrations && (
                 <form action={disconnectGoogleCalendar}>
                   <Button type="submit" variant="secondary">Disconnect</Button>
                 </form>
               )}
             </>
           ) : (
-            role === "owner" || role === "admin" ? (
+            canManageIntegrations ? (
               <a
                 href="/api/calendar/google/connect"
                 className="inline-flex items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"

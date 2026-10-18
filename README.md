@@ -6,10 +6,10 @@ workflows like booking appointments or creating CRM records.
 
 **Current state: Phase 0 (auth, organizations/workspaces, dashboard shell)
 plus Phase 1 (real inbound calling — Twilio + Vapi, call history,
-transcripts) and a Google Calendar integration for real availability and
-appointment creation.** CRM integration, outbound campaigns, billing, and
-a public API are NOT implemented — see "What has NOT been implemented yet"
-below.
+transcripts), Google Calendar integration for real availability and
+appointment creation, and HubSpot CRM synchronization for contacts and
+deals. Outbound campaigns, billing, and a public API are NOT implemented —
+see "What has NOT been implemented yet" below.
 
 ## Tech stack
 
@@ -20,6 +20,8 @@ below.
   httpOnly cookie
 - Twilio (inbound call webhook, signature-verified) + Vapi (voice runtime,
   via the documented "phone-call-bypass" pattern)
+- Google Calendar and HubSpot OAuth integrations with encrypted refresh
+  tokens and provider API clients
 - Vitest, with real service-layer tests run against an in-memory Postgres
   (`@electric-sql/pglite`) rather than mocks
 
@@ -36,6 +38,7 @@ app/
   api/voice/twilio/inbound/route.ts   — Twilio inbound-call webhook
   api/voice/vapi/events/route.ts      — Vapi server-message webhook
   api/calendar/google/                — per-workspace Google OAuth connection
+  api/crm/hubspot/                    — per-workspace HubSpot OAuth connection
   layout.tsx, page.tsx                — root layout + "/" redirect
 components/
   ui/                                  — Button, Input, Label, Card, FieldError
@@ -56,6 +59,8 @@ server/
   integrations/
     google/calendar.ts, oauth.ts        — encrypted credentials, OAuth,
                                            FreeBusy and event creation
+    hubspot/client.ts, oauth.ts         — encrypted credentials, OAuth,
+                                           HubSpot contacts and deals
     twilio/verify.ts, twiml.ts,        — signature verification, TwiML
       sms.ts, transfer.ts                helpers, SMS send, live-call transfer
     vapi/client.ts, assistant.ts,      — REST client, assistant sync,
@@ -170,8 +175,14 @@ real external systems and are the most abuse-sensitive:
 `check_availability` and `book_appointment` use the workspace's connected
 Google primary calendar for busy-time checks and event creation. The
 appointment records remain in our database too; availability is limited to
-the existing fixed 9am-5pm UTC schedule. `customers` and `jobs` are still
-internal records, not a real CRM integration.
+the existing fixed 9am-5pm UTC schedule. When a workspace connects
+HubSpot, customer upserts create/update HubSpot contacts using phone
+number matching, customer lookups can import a matching HubSpot contact,
+and creating a work order creates a HubSpot deal associated with that
+contact. Internal customer/job rows remain the application's source of
+truth. Until connected, these agent tools continue to work with local
+records. Existing local customers are synced when next used for booking or
+work-order creation; existing jobs are not bulk-backfilled automatically.
 
 ### Two rules the whole codebase is built around
 
@@ -211,6 +222,7 @@ anywhere.
 |----------------------|--------------------------------------------------------------------------|------------------|
 | `organizations`     | A tenant/workspace.                                                     | `slug` unique |
 | `google_calendar_integrations` | One encrypted Google refresh token per organization.             | unique `organization_id`; cascade delete |
+| `hubspot_integrations` | One encrypted HubSpot refresh token per organization.                 | unique `organization_id`; cascade delete |
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
 | `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, `vapi_assistant_id`. | `organization_id` cascade delete; `status` enum |
@@ -218,9 +230,9 @@ anywhere.
 | `calls`              | One row per phone call. `status` is call-lifecycle state; `outcome` is a separate, nullable business-outcome summary (e.g. `appointment_booked`) set by the tool executor — never conflated with `status`. | `twilio_call_sid` unique; `vapi_call_id` unique; `agent_id`/`phone_number_id` NOT NULL, cascade delete |
 | `call_transcripts`   | Transcript lines. `sequence_number` is assigned by US (not the provider) so display order survives out-of-order webhook delivery. Only "final" transcript chunks are persisted — partials are filtered as noise. | unique `(call_id, sequence_number)`; cascade delete |
 | `webhook_events`     | Idempotency ledger for provider webhooks. `external_event_id` is a dedupe key WE derive (Twilio: the CallSid; Vapi: call id + message type + a hash of the payload) — neither provider hands us a documented stable event id. | unique `(provider, external_event_id)` |
-| `customers`          | Minimal customer record for the `get_customer`/`create_customer` tools. NOT a real CRM. | unique `(organization_id, phone)` |
+| `customers`          | Local customer record, linked to a HubSpot contact when CRM sync is enabled. | unique `(organization_id, phone)`; optional `hubspot_contact_id` |
 | `appointments`       | Local record corresponding to a booking created in the organization's Google primary calendar. | `organization_id`/`customer_id`/`agent_id` cascade delete; `google_event_id` stores the calendar event |
-| `jobs`               | Backs `create_job` — an internal work-order record, not a connection to any external job-management/CRM system. | `customer_id` cascade delete; `appointment_id` nullable, `ON DELETE SET NULL` |
+| `jobs`               | Local work order, linked to a HubSpot deal when CRM sync is enabled.      | `customer_id` cascade delete; optional `hubspot_deal_id` |
 | `tool_executions`    | Execution ledger for every tool call an agent makes — input, output or error, status, duration. This is what "log execution" means concretely; see `server/tools/executor.ts`. | indexed on `call_id` |
 
 ## Local setup
@@ -249,6 +261,9 @@ cp .env.example .env
 | `GOOGLE_CLIENT_ID`     | calendar           | Google Cloud OAuth 2.0 Web application client |
 | `GOOGLE_CLIENT_SECRET` | calendar           | Google Cloud OAuth 2.0 Web application secret |
 | `CALENDAR_TOKEN_ENCRYPTION_KEY` | calendar   | Base64-encoded 32-byte AES-256-GCM key for refresh tokens |
+| `HUBSPOT_CLIENT_ID`    | CRM                | HubSpot public app client ID |
+| `HUBSPOT_CLIENT_SECRET`| CRM                | HubSpot public app client secret |
+| `CRM_TOKEN_ENCRYPTION_KEY` | CRM           | Base64-encoded 32-byte AES-256-GCM key for refresh tokens |
 
 No real secrets are committed anywhere in this repo; `.env` is gitignored.
 
@@ -328,7 +343,31 @@ automated account setup. You need to do the following yourself:
    UTC. Calendar tools report an error if no calendar is connected; they do
    not silently fall back to local-only availability.
 
-### 7. Run tests
+### 7. Connect HubSpot CRM (optional)
+
+1. Create a HubSpot public app and configure the OAuth redirect URI as
+   `${APP_URL}/api/crm/hubspot/callback`.
+2. Enable these OAuth scopes in the app:
+   `crm.objects.contacts.read`, `crm.objects.contacts.write`,
+   `crm.objects.deals.read`, `crm.objects.deals.write`, and
+   `crm.schemas.deals.read`.
+3. Add `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET`, and a unique
+   `CRM_TOKEN_ENCRYPTION_KEY` to `.env`. Generate the encryption key with:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   ```
+
+4. Apply the schema with `npm run db:push`, sign in to this app as a
+   workspace owner or admin, open **Settings**, and select **Connect
+   HubSpot**. The connected HubSpot account's default open deal stage is
+   used for newly created jobs.
+5. Agent-created customers are matched by phone and created/updated as
+   HubSpot contacts. Agent-created jobs become HubSpot deals associated
+   with their contact. Disconnecting HubSpot stops remote synchronization;
+   the local records continue working.
+
+### 8. Run tests
 
 ```bash
 npm test
@@ -338,7 +377,7 @@ Tests need no live database or provider credentials: service tests use an
 in-memory Postgres (pglite), and provider integrations use controlled HTTP
 responses and signature fixtures.
 
-### 8. Type-check and build
+### 9. Type-check and build
 
 ```bash
 npm run typecheck   # next typegen && tsc --noEmit
@@ -349,7 +388,7 @@ npm run build
 
 - Configurable business hours and time zones for appointment availability
 - Calendar provider alternatives (for now, only Google Calendar is supported)
-- Real CRM integration — `customers`/`jobs` are internal records only
+- HubSpot bulk backfill for pre-existing jobs, and multi-provider CRM support
 - A generic, user-configurable workflow engine
 - Outbound campaigns, campaign queues, Redis, BullMQ
 - Billing, a public API
@@ -388,6 +427,12 @@ npm run build
   `tests/server/tools-crm.test.ts`. The full suite was not rerun for this
   change; a previous full run in this environment hit a fatal memory
   allocation error and a session-token test timeout.
+- Focused HubSpot validation: **8 HubSpot API/OAuth tests**, **18 customer
+  and job tool tests**, and **7 call outcome/analytics tests** pass.
+  Coverage includes OAuth state and scopes, encrypted token storage,
+  HubSpot-only contact lookup, contact create/update, associated-deal
+  creation, and local rollback when deal sync fails. Provider calls use
+  mocked HTTP responses; no live HubSpot portal credentials were available.
 - Earlier project test coverage includes:
   - Phase 0: password hashing, session tokens, registration/login,
     organization membership + role enforcement, agent CRUD + tenant
@@ -432,12 +477,13 @@ npm run build
   `app/layout.tsx`); the build was verified with system fonts swapped in
   temporarily, then the real font import was restored for the delivered
   code. This will build as-is with normal internet access.
-- **Not verified — no live Twilio/Vapi/Google credentials were available in this
+- **Not verified — no live Twilio/Vapi/Google/HubSpot credentials were available in this
   environment:** the actual `send_sms` Twilio Messages API call, the
   actual `transfer_call` Twilio call-redirect API call, the full
   Twilio→webhook→Vapi-bypass round trip, and the Google OAuth/Calendar
-  round trip. Google Calendar behavior is tested with mocked OAuth and
-  Calendar API responses, not a real Google account. The
+  and HubSpot OAuth/CRM round trips. Google Calendar and HubSpot behavior
+  are tested with mocked OAuth and provider API responses, not real
+  accounts. The
   request shapes for the SMS send and call-transfer APIs were verified
   against current Twilio documentation before implementing (both are
   long-stable, well-documented APIs: `client.messages.create` and
