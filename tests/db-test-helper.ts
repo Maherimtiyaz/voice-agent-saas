@@ -31,6 +31,17 @@ const SCHEMA_SQL = `
   );
   create unique index organizations_slug_unique on organizations (slug);
 
+  create table google_calendar_integrations (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    calendar_id text not null default 'primary',
+    encrypted_refresh_token text not null,
+    connected_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create unique index google_calendar_integrations_organization_unique
+    on google_calendar_integrations (organization_id);
+
   create table users (
     id uuid primary key default gen_random_uuid(),
     email text not null,
@@ -148,6 +159,7 @@ const SCHEMA_SQL = `
     call_id uuid references calls (id) on delete set null,
     scheduled_at timestamptz not null,
     duration_minutes integer not null default 30,
+    google_event_id text,
     status appointment_status not null default 'scheduled',
     notes text,
     created_at timestamptz not null default now(),
@@ -183,10 +195,17 @@ const SCHEMA_SQL = `
   create index tool_executions_call_id_idx on tool_executions (call_id);
 `;
 
+export type TestDatabase = Awaited<ReturnType<typeof createTestDatabase>>;
+
+const openClients: PGlite[] = [];
+
 export async function createTestDatabase() {
   const client = new PGlite();
   await client.exec(SCHEMA_SQL);
+  openClients.push(client);
   return drizzle(client, { schema });
 }
 
-export type TestDatabase = Awaited<ReturnType<typeof createTestDatabase>>;
+export async function closeAllTestDatabases(): Promise<void> {
+  await Promise.all(openClients.splice(0).map((client) => client.close()));
+}

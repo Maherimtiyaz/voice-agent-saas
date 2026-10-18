@@ -1,9 +1,26 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/server/integrations/google/calendar", () => ({
+  getGoogleCalendarBusyIntervals: vi.fn(async () => []),
+  createGoogleCalendarEvent: vi.fn(async () => "google-event-id"),
+  deleteGoogleCalendarEvent: vi.fn(async () => undefined),
+}));
+
 import { createTestDatabase, type TestDatabase } from "../db-test-helper";
-import { agents, appointments, calls, organizations, phoneNumbers } from "@/db/schema";
+import {
+  agents,
+  appointments,
+  calls,
+  organizations,
+  phoneNumbers,
+} from "@/db/schema";
 import { executeTool } from "@/server/tools/executor";
 import { ensureToolsRegistered } from "@/server/tools/definitions";
 import type { ToolContext } from "@/server/tools/types";
+import {
+  createGoogleCalendarEvent,
+  getGoogleCalendarBusyIntervals,
+} from "@/server/integrations/google/calendar";
 
 let db: TestDatabase;
 
@@ -51,6 +68,8 @@ function ctx(organizationId: string, agentId: string, callId: string): ToolConte
 
 beforeEach(async () => {
   db = await createTestDatabase();
+  vi.mocked(getGoogleCalendarBusyIntervals).mockReset().mockResolvedValue([]);
+  vi.mocked(createGoogleCalendarEvent).mockReset().mockResolvedValue("google-event-id");
   ensureToolsRegistered();
 });
 
@@ -147,6 +166,30 @@ describe("check_availability / book_appointment", () => {
     }
   });
 
+  it("excludes slots that overlap Google Calendar busy events", async () => {
+    const { orgA, agentA, callA } = await seedOrgAndAgent();
+    vi.mocked(getGoogleCalendarBusyIntervals).mockResolvedValue([
+      {
+        start: new Date("2026-10-12T10:00:00.000Z"),
+        end: new Date("2026-10-12T11:00:00.000Z"),
+      },
+    ]);
+
+    const result = await executeTool(db, {
+      toolName: "check_availability",
+      rawInput: { date: "2026-10-12" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const data = result.data as { availableSlots: string[] };
+      expect(data.availableSlots).not.toContain("2026-10-12T10:00:00.000Z");
+      expect(data.availableSlots).not.toContain("2026-10-12T10:30:00.000Z");
+      expect(data.availableSlots).toContain("2026-10-12T11:00:00.000Z");
+    }
+  });
+
   it("books an appointment and removes that slot from later availability", async () => {
     const { orgA, agentA, callA } = await seedOrgAndAgent();
     const booking = await executeTool(db, {
@@ -163,6 +206,11 @@ describe("check_availability / book_appointment", () => {
     if (booking.success) {
       expect((booking.data as { booked: boolean }).booked).toBe(true);
     }
+    expect(createGoogleCalendarEvent).toHaveBeenCalledOnce();
+    const [storedAppointment] = await db
+      .select({ googleEventId: appointments.googleEventId })
+      .from(appointments);
+    expect(storedAppointment.googleEventId).toBe("google-event-id");
 
     const availability = await executeTool(db, {
       toolName: "check_availability",
@@ -218,6 +266,33 @@ describe("check_availability / book_appointment", () => {
       const data = availabilityForB.data as { availableSlots: string[] };
       expect(data.availableSlots).toContain("2026-10-15T09:00:00.000Z");
     }
+  });
+
+  it("does not book a slot already occupied in Google Calendar", async () => {
+    const { orgA, agentA, callA } = await seedOrgAndAgent();
+    vi.mocked(getGoogleCalendarBusyIntervals).mockResolvedValue([
+      {
+        start: new Date("2026-10-14T10:00:00.000Z"),
+        end: new Date("2026-10-14T10:30:00.000Z"),
+      },
+    ]);
+
+    const result = await executeTool(db, {
+      toolName: "book_appointment",
+      rawInput: {
+        customerName: "Sam Rivera",
+        customerPhone: "+14155550108",
+        scheduledAt: "2026-10-14T10:00:00.000Z",
+        durationMinutes: 30,
+      },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: { booked: false, reason: "slot_unavailable" },
+    });
+    expect(createGoogleCalendarEvent).not.toHaveBeenCalled();
   });
 });
 

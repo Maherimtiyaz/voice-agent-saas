@@ -10,7 +10,7 @@ const inputSchema = z.object({
 export const checkAvailabilityTool: ToolDefinition<z.infer<typeof inputSchema>> = {
   name: "check_availability",
   description:
-    "Check available appointment slots on a given date (YYYY-MM-DD), within standard business hours (9am-5pm). Returns a list of ISO 8601 start times.",
+    "Check available appointment slots on a given date (YYYY-MM-DD), within standard business hours (9am-5pm UTC). Requires the workspace's Google Calendar connection and excludes busy events. Returns ISO 8601 start times.",
   inputSchema,
   async handler(db, input, context) {
     const slots = await getAvailableSlots(db, {

@@ -113,6 +113,24 @@ export const organizations = pgTable("organizations", {
   slugUnique: uniqueIndex("organizations_slug_unique").on(table.slug),
 }));
 
+export const googleCalendarIntegrations = pgTable("google_calendar_integrations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  calendarId: text("calendar_id").notNull().default("primary"),
+  encryptedRefreshToken: text("encrypted_refresh_token").notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  organizationUnique: uniqueIndex("google_calendar_integrations_organization_unique")
+    .on(table.organizationId),
+}));
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull(),
@@ -315,15 +333,13 @@ export const webhookEvents = pgTable("webhook_events", {
 }));
 
 /**
- * Phase 1.1: the agent tool framework's data model.
+ * Agent tool and calendar integration data model.
  *
  * These back a small, generic set of demo tools (get/create customer,
- * check availability, book appointment, create job) — NOT a real CRM or
- * calendar integration. `check_availability` works against `appointments`
- * rows in this same table, on a fixed hardcoded business-hours schedule
- * (see server/tools/definitions/check-availability.ts); there is no
- * Google Calendar / Outlook sync. `jobs` is an internal record only, not
- * a connection to any external job-management system.
+ * check availability, book appointment, create job). Availability and
+ * bookings are synced to the organization's connected Google primary
+ * calendar; business hours remain fixed at 9am-5pm UTC. `customers` and
+ * `jobs` are internal records only, not a real CRM integration.
  */
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -361,6 +377,7 @@ export const appointments = pgTable("appointments", {
   callId: uuid("call_id").references(() => calls.id, { onDelete: "set null" }),
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
   durationMinutes: integer("duration_minutes").notNull().default(30),
+  googleEventId: text("google_event_id"),
   status: appointmentStatusEnum("status").notNull().default("scheduled"),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true })
@@ -426,9 +443,10 @@ export const toolExecutions = pgTable("tool_executions", {
   callIdx: index("tool_executions_call_id_idx").on(table.callId),
 }));
 
-export const organizationsRelations = relations(organizations, ({ many }) => ({
+export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   members: many(organizationMembers),
   agents: many(agents),
+  googleCalendarIntegration: one(googleCalendarIntegrations),
 }));
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -553,6 +571,8 @@ export const toolExecutionsRelations = relations(toolExecutions, ({ one }) => ({
 
 export type Organization = typeof organizations.$inferSelect;
 export type NewOrganization = typeof organizations.$inferInsert;
+export type GoogleCalendarIntegration = typeof googleCalendarIntegrations.$inferSelect;
+export type NewGoogleCalendarIntegration = typeof googleCalendarIntegrations.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;

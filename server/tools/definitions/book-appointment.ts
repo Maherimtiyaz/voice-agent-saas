@@ -15,7 +15,7 @@ const inputSchema = z.object({
 export const bookAppointmentTool: ToolDefinition<z.infer<typeof inputSchema>> = {
   name: "book_appointment",
   description:
-    "Book an appointment for a customer at a specific date/time. Creates the customer record if one doesn't already exist for that phone number. Fails safely with booked:false if the slot is no longer available — call check_availability again in that case.",
+    "Book an appointment for a customer at a specific date/time in the connected Google Calendar. Creates the customer record if one doesn't already exist for that phone number. Fails safely with booked:false if the slot is no longer available — call check_availability again in that case.",
   inputSchema,
   async handler(db, input, context) {
     const { customer } = await upsertCustomer(db, {

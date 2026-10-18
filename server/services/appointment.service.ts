@@ -2,15 +2,12 @@ import { and, eq, gte, lt } from "drizzle-orm";
 import type { Database } from "@/db";
 import { appointments } from "@/db/schema";
 import type { Appointment } from "@/db/schema";
+import {
+  createGoogleCalendarEvent,
+  deleteGoogleCalendarEvent,
+  getGoogleCalendarBusyIntervals,
+} from "@/server/integrations/google/calendar";
 
-/**
- * NOT a real calendar integration — there is no Google Calendar/Outlook
- * sync. Availability is computed against our own `appointments` table on
- * a fixed, hardcoded business-hours schedule shared across the whole
- * organization (not per-agent). This is a deliberately simple stand-in
- * so the tool framework has something real to check against; replacing
- * it with an actual calendar provider is future work, not Phase 1.1.
- */
 const BUSINESS_HOURS_START = 9; // 9am
 const BUSINESS_HOURS_END = 17; // 5pm
 const SLOT_MINUTES = 30;
@@ -69,16 +66,31 @@ export async function getAvailableSlots(
   db: Database,
   params: { organizationId: string; dateOnly: string; durationMinutes: number },
 ): Promise<Date[]> {
-  const booked = await overlappingAppointments(db, {
-    organizationId: params.organizationId,
-    dateOnly: params.dateOnly,
-  });
+  const dayStart = startOfDayUtc(params.dateOnly);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60_000);
+  const [booked, calendarBusy] = await Promise.all([
+    overlappingAppointments(db, {
+      organizationId: params.organizationId,
+      dateOnly: params.dateOnly,
+    }),
+    getGoogleCalendarBusyIntervals(db, {
+      organizationId: params.organizationId,
+      timeMin: dayStart,
+      timeMax: dayEnd,
+    }),
+  ]);
 
   return candidateSlots(params.dateOnly, params.durationMinutes).filter(
-    (slot) =>
-      !booked.some((appointment) =>
+    (slot) => {
+      const overlapsLocalAppointment = booked.some((appointment) =>
         slotsOverlap(slot, params.durationMinutes, appointment.scheduledAt, appointment.durationMinutes),
-      ),
+      );
+      const overlapsCalendarEvent = calendarBusy.some((busy) =>
+        slot.getTime() < busy.end.getTime()
+        && busy.start.getTime() < slot.getTime() + params.durationMinutes * 60_000,
+      );
+      return !overlapsLocalAppointment && !overlapsCalendarEvent;
+    },
   );
 }
 
@@ -114,27 +126,52 @@ export async function bookAppointment(
       appointment.durationMinutes,
     ),
   );
-  // Not fully race-free without a DB-level exclusion constraint — two
-  // concurrent bookings for the same slot could both pass this check.
-  // Acceptable for Phase 1.1's scope; a unique/exclusion constraint on
-  // (organization_id, scheduled_at) ranges is the natural next hardening
-  // step if double-booking shows up in practice.
-  if (conflict) {
+  const dayStart = startOfDayUtc(dateOnly);
+  const calendarBusy = await getGoogleCalendarBusyIntervals(db, {
+    organizationId: params.organizationId,
+    timeMin: dayStart,
+    timeMax: new Date(dayStart.getTime() + 24 * 60 * 60_000),
+  });
+  const conflictsWithCalendar = calendarBusy.some((busy) =>
+    params.scheduledAt.getTime() < busy.end.getTime()
+    && busy.start.getTime() < params.scheduledAt.getTime() + params.durationMinutes * 60_000,
+  );
+  if (conflict || conflictsWithCalendar) {
     return { booked: false, reason: "slot_unavailable" };
   }
 
-  const [appointment] = await db
-    .insert(appointments)
-    .values({
-      organizationId: params.organizationId,
-      customerId: params.customerId,
-      agentId: params.agentId,
-      callId: params.callId,
-      scheduledAt: params.scheduledAt,
-      durationMinutes: params.durationMinutes,
-      notes: params.notes,
-    })
-    .returning();
+  const googleEventId = await createGoogleCalendarEvent(db, {
+    organizationId: params.organizationId,
+    start: params.scheduledAt,
+    durationMinutes: params.durationMinutes,
+    description: params.notes,
+  });
 
-  return { booked: true, appointment };
+  try {
+    const [appointment] = await db
+      .insert(appointments)
+      .values({
+        organizationId: params.organizationId,
+        customerId: params.customerId,
+        agentId: params.agentId,
+        callId: params.callId,
+        scheduledAt: params.scheduledAt,
+        durationMinutes: params.durationMinutes,
+        googleEventId,
+        notes: params.notes,
+      })
+      .returning();
+
+    return { booked: true, appointment };
+  } catch (error) {
+    try {
+      await deleteGoogleCalendarEvent(db, {
+        organizationId: params.organizationId,
+        eventId: googleEventId,
+      });
+    } catch (cleanupError) {
+      console.error("[calendar] failed to remove Google event after local booking failed", cleanupError);
+    }
+    throw error;
+  }
 }
