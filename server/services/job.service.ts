@@ -1,7 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import type { Database } from "@/db";
-import { appointments, jobs } from "@/db/schema";
+import { appointments, customers, jobs } from "@/db/schema";
 import type { Job } from "@/db/schema";
+import { createHubSpotDealIfConnected } from "@/server/integrations/hubspot/client";
+import { syncCustomerToHubSpot } from "@/server/services/customer.service";
 
 export type CreateJobResult =
   | { created: true; job: Job }
@@ -16,6 +18,18 @@ export async function createJob(
     appointmentId?: string;
   },
 ): Promise<CreateJobResult> {
+  const [customer] = await db
+    .select()
+    .from(customers)
+    .where(and(
+      eq(customers.id, params.customerId),
+      eq(customers.organizationId, params.organizationId),
+    ))
+    .limit(1);
+  if (!customer) {
+    throw new Error("Customer not found for this organization.");
+  }
+
   if (params.appointmentId) {
     // The appointment must belong to the SAME organization — this is
     // the same "never trust an id the LLM supplies" rule as everywhere
@@ -45,5 +59,33 @@ export async function createJob(
     })
     .returning();
 
-  return { created: true, job };
+  try {
+    const syncedCustomer = await syncCustomerToHubSpot(db, customer);
+    if (syncedCustomer.hubspotContactId) {
+      const hubspotDealId = await createHubSpotDealIfConnected(db, {
+        organizationId: params.organizationId,
+        contactId: syncedCustomer.hubspotContactId,
+        jobId: job.id,
+        description: job.description,
+      });
+      if (hubspotDealId) {
+        const [updatedJob] = await db
+          .update(jobs)
+          .set({ hubspotDealId, updatedAt: new Date() })
+          .where(and(eq(jobs.id, job.id), eq(jobs.organizationId, params.organizationId)))
+          .returning();
+        return { created: true, job: updatedJob };
+      }
+    }
+    return { created: true, job };
+  } catch (error) {
+    try {
+      await db
+        .delete(jobs)
+        .where(and(eq(jobs.id, job.id), eq(jobs.organizationId, params.organizationId)));
+    } catch (cleanupError) {
+      console.error("[crm] failed to remove local job after HubSpot sync failed", cleanupError);
+    }
+    throw error;
+  }
 }

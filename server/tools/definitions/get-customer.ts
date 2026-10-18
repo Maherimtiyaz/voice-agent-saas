@@ -9,7 +9,7 @@ const inputSchema = z.object({
 export const getCustomerTool: ToolDefinition<z.infer<typeof inputSchema>> = {
   name: "get_customer",
   description:
-    "Look up an existing customer by phone number within this business. Returns found:false if no customer exists with that number yet.",
+    "Look up a customer by phone number in this business's records and connected HubSpot account. A HubSpot contact is added to the business's records when first found. Returns found:false if no customer exists in either place.",
   inputSchema,
   async handler(db, input, context) {
     const customer = await findCustomerByPhone(db, {

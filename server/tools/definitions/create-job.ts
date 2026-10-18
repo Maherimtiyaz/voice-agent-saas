@@ -14,7 +14,7 @@ const inputSchema = z.object({
 export const createJobTool: ToolDefinition<z.infer<typeof inputSchema>> = {
   name: "create_job",
   description:
-    "Create an internal job/work-order record for an existing customer, optionally linked to a booked appointment. The customer must already exist (call get_customer or create_customer first).",
+    "Create a job/work-order record for an existing customer, optionally linked to a booked appointment. If HubSpot is connected, also create a deal associated with the customer's contact. The customer must already exist (call get_customer or create_customer first).",
   inputSchema,
   async handler(db, input, context) {
     const customer = await findCustomerByPhone(db, {

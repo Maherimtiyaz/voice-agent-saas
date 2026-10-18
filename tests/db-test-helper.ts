@@ -42,6 +42,16 @@ const SCHEMA_SQL = `
   create unique index google_calendar_integrations_organization_unique
     on google_calendar_integrations (organization_id);
 
+  create table hubspot_integrations (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    encrypted_refresh_token text not null,
+    connected_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create unique index hubspot_integrations_organization_unique
+    on hubspot_integrations (organization_id);
+
   create table users (
     id uuid primary key default gen_random_uuid(),
     email text not null,
@@ -146,6 +156,7 @@ const SCHEMA_SQL = `
     phone text not null,
     email text,
     notes text,
+    hubspot_contact_id text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
@@ -174,6 +185,7 @@ const SCHEMA_SQL = `
     appointment_id uuid references appointments (id) on delete set null,
     description text not null,
     status job_status not null default 'open',
+    hubspot_deal_id text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );

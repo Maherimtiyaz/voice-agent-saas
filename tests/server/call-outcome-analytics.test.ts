@@ -1,5 +1,11 @@
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/server/integrations/google/calendar", () => ({
+  getGoogleCalendarBusyIntervals: vi.fn(async () => []),
+  createGoogleCalendarEvent: vi.fn(async () => "google-event-id"),
+  deleteGoogleCalendarEvent: vi.fn(async () => undefined),
+}));
 import { createTestDatabase, type TestDatabase } from "../db-test-helper";
 import { agents, calls, organizationMembers, organizations, phoneNumbers, users } from "@/db/schema";
 import { executeTool } from "@/server/tools/executor";

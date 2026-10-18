@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 
 vi.mock("@/server/integrations/google/calendar", () => ({
   getGoogleCalendarBusyIntervals: vi.fn(async () => []),
@@ -6,11 +7,19 @@ vi.mock("@/server/integrations/google/calendar", () => ({
   deleteGoogleCalendarEvent: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/server/integrations/hubspot/client", () => ({
+  findHubSpotContactByPhoneIfConnected: vi.fn(async () => null),
+  syncHubSpotContactIfConnected: vi.fn(async () => null),
+  createHubSpotDealIfConnected: vi.fn(async () => null),
+}));
+
 import { createTestDatabase, type TestDatabase } from "../db-test-helper";
 import {
   agents,
   appointments,
   calls,
+  customers,
+  jobs,
   organizations,
   phoneNumbers,
 } from "@/db/schema";
@@ -21,6 +30,10 @@ import {
   createGoogleCalendarEvent,
   getGoogleCalendarBusyIntervals,
 } from "@/server/integrations/google/calendar";
+import {
+  createHubSpotDealIfConnected,
+  syncHubSpotContactIfConnected,
+} from "@/server/integrations/hubspot/client";
 
 let db: TestDatabase;
 
@@ -70,6 +83,8 @@ beforeEach(async () => {
   db = await createTestDatabase();
   vi.mocked(getGoogleCalendarBusyIntervals).mockReset().mockResolvedValue([]);
   vi.mocked(createGoogleCalendarEvent).mockReset().mockResolvedValue("google-event-id");
+  vi.mocked(syncHubSpotContactIfConnected).mockReset().mockResolvedValue(null);
+  vi.mocked(createHubSpotDealIfConnected).mockReset().mockResolvedValue(null);
   ensureToolsRegistered();
 });
 
@@ -137,6 +152,24 @@ describe("get_customer / create_customer", () => {
       context: ctx(orgB.id, agentB.id, callB.id),
     });
     expect(foundInB).toEqual({ success: true, data: { found: false } });
+  });
+
+  it("stores the HubSpot contact id after syncing a new customer", async () => {
+    const { orgA, agentA, callA } = await seedOrgAndAgent();
+    vi.mocked(syncHubSpotContactIfConnected).mockResolvedValue("hs-contact-1");
+
+    const result = await executeTool(db, {
+      toolName: "create_customer",
+      rawInput: { name: "Sam Rivera", phone: "+14155550111" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+    const [customer] = await db
+      .select()
+      .from(customers)
+      .where(eq(customers.phone, "+14155550111"));
+
+    expect(result.success).toBe(true);
+    expect(customer.hubspotContactId).toBe("hs-contact-1");
   });
 
   it("rejects a malformed phone number before touching the database", async () => {
@@ -324,6 +357,54 @@ describe("create_job", () => {
     if (job.success) {
       expect((job.data as { status: string }).status).toBe("open");
     }
+  });
+
+  it("syncs jobs as HubSpot deals associated with the customer contact", async () => {
+    const { orgA, agentA, callA } = await seedOrgAndAgent();
+    vi.mocked(syncHubSpotContactIfConnected).mockResolvedValue("hs-contact-2");
+    vi.mocked(createHubSpotDealIfConnected).mockResolvedValue("hs-deal-2");
+    await executeTool(db, {
+      toolName: "create_customer",
+      rawInput: { name: "Sam Rivera", phone: "+14155550112" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+
+    const result = await executeTool(db, {
+      toolName: "create_job",
+      rawInput: { customerPhone: "+14155550112", description: "Repair furnace" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+    const [job] = await db.select().from(jobs);
+
+    expect(result.success).toBe(true);
+    expect(createHubSpotDealIfConnected).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        organizationId: orgA.id,
+        contactId: "hs-contact-2",
+        description: "Repair furnace",
+      }),
+    );
+    expect(job.hubspotDealId).toBe("hs-deal-2");
+  });
+
+  it("removes the local job when a connected HubSpot deal cannot be created", async () => {
+    const { orgA, agentA, callA } = await seedOrgAndAgent();
+    vi.mocked(syncHubSpotContactIfConnected).mockResolvedValue("hs-contact-3");
+    vi.mocked(createHubSpotDealIfConnected).mockRejectedValue(new Error("HubSpot unavailable"));
+    await executeTool(db, {
+      toolName: "create_customer",
+      rawInput: { name: "Sam Rivera", phone: "+14155550113" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+
+    const result = await executeTool(db, {
+      toolName: "create_job",
+      rawInput: { customerPhone: "+14155550113", description: "Repair furnace" },
+      context: ctx(orgA.id, agentA.id, callA.id),
+    });
+    expect(result.success).toBe(false);
+    expect(await db.select().from(jobs)).toHaveLength(0);
   });
 
   it("refuses to link a job to another organization's appointment", async () => {

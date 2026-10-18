@@ -131,6 +131,23 @@ export const googleCalendarIntegrations = pgTable("google_calendar_integrations"
     .on(table.organizationId),
 }));
 
+export const hubspotIntegrations = pgTable("hubspot_integrations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  encryptedRefreshToken: text("encrypted_refresh_token").notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  organizationUnique: uniqueIndex("hubspot_integrations_organization_unique")
+    .on(table.organizationId),
+}));
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull(),
@@ -338,8 +355,9 @@ export const webhookEvents = pgTable("webhook_events", {
  * These back a small, generic set of demo tools (get/create customer,
  * check availability, book appointment, create job). Availability and
  * bookings are synced to the organization's connected Google primary
- * calendar; business hours remain fixed at 9am-5pm UTC. `customers` and
- * `jobs` are internal records only, not a real CRM integration.
+ * calendar; business hours remain fixed at 9am-5pm UTC. When HubSpot is
+ * connected, customer records sync to HubSpot contacts and jobs sync to
+ * associated deals; the local rows remain the source for app behavior.
  */
 export const customers = pgTable("customers", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -350,6 +368,7 @@ export const customers = pgTable("customers", {
   phone: text("phone").notNull(),
   email: text("email"),
   notes: text("notes"),
+  hubspotContactId: text("hubspot_contact_id"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -403,6 +422,7 @@ export const jobs = pgTable("jobs", {
   }),
   description: text("description").notNull(),
   status: jobStatusEnum("status").notNull().default("open"),
+  hubspotDealId: text("hubspot_deal_id"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -447,6 +467,24 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   members: many(organizationMembers),
   agents: many(agents),
   googleCalendarIntegration: one(googleCalendarIntegrations),
+  hubspotIntegration: one(hubspotIntegrations),
+}));
+
+export const googleCalendarIntegrationsRelations = relations(
+  googleCalendarIntegrations,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [googleCalendarIntegrations.organizationId],
+      references: [organizations.id],
+    }),
+  }),
+);
+
+export const hubspotIntegrationsRelations = relations(hubspotIntegrations, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [hubspotIntegrations.organizationId],
+    references: [organizations.id],
+  }),
 }));
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -573,6 +611,8 @@ export type Organization = typeof organizations.$inferSelect;
 export type NewOrganization = typeof organizations.$inferInsert;
 export type GoogleCalendarIntegration = typeof googleCalendarIntegrations.$inferSelect;
 export type NewGoogleCalendarIntegration = typeof googleCalendarIntegrations.$inferInsert;
+export type HubspotIntegration = typeof hubspotIntegrations.$inferSelect;
+export type NewHubspotIntegration = typeof hubspotIntegrations.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;
