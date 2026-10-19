@@ -14,6 +14,8 @@ import {
 } from "@/server/services/organization.service";
 import { disconnectGoogleCalendar } from "@/app/actions/calendar.actions";
 import { getHubSpotConnectionStatus } from "@/server/integrations/hubspot/client";
+import { listApiKeys } from "@/server/services/api-key.service";
+import { ApiKeyManagement } from "./api-key-management";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -25,7 +27,14 @@ export default async function SettingsPage({
   searchParams: Promise<{ crm?: string; calendar?: string }>;
 }) {
   const { user, organizationId, role } = await requireCurrentContext();
-  const [{ crm }, organization, members, calendarConnection, hubspotConnection] = await Promise.all([
+  const [
+    { crm },
+    organization,
+    members,
+    calendarConnection,
+    hubspotConnection,
+    apiKeys,
+  ] = await Promise.all([
     searchParams,
     getOrganization(db, { organizationId, userId: user.id }),
     listOrganizationMembers(db, { organizationId, userId: user.id }),
@@ -35,6 +44,9 @@ export default async function SettingsPage({
       .where(eq(googleCalendarIntegrations.organizationId, organizationId))
       .limit(1),
     getHubSpotConnectionStatus(db, organizationId),
+    role === "owner" || role === "admin"
+      ? listApiKeys(db, { organizationId, userId: user.id })
+      : Promise.resolve([]),
   ]);
   const isCalendarConnected = calendarConnection.length > 0;
   const canManageIntegrations = role === "owner" || role === "admin";
@@ -43,7 +55,7 @@ export default async function SettingsPage({
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Settings</h1>
-        <p className="text-sm text-muted">Workspace details and members.</p>
+        <p className="text-sm text-muted">Workspace details, access, and integrations.</p>
       </div>
 
       <Card>
@@ -105,6 +117,20 @@ export default async function SettingsPage({
           </dd>
         </dl>
       </Card>
+
+      {canManageIntegrations && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Public API keys</CardTitle>
+            <CardDescription>
+              Workspace API keys grant read-only access to agents, phone numbers,
+              calls, and transcripts. Keep keys server-side and revoke any key
+              that may have been exposed.
+            </CardDescription>
+          </CardHeader>
+          <ApiKeyManagement apiKeys={apiKeys} />
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

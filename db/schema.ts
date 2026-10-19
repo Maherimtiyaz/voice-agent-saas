@@ -197,6 +197,27 @@ export const organizationMembers = pgTable("organization_members", {
   ),
 }));
 
+export const apiKeys = pgTable("api_keys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  name: text("name").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  keyHash: text("key_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => ({
+  keyHashUnique: uniqueIndex("api_keys_key_hash_unique").on(table.keyHash),
+  organizationIdx: index("api_keys_organization_id_idx").on(table.organizationId),
+}));
+
 export const agents = pgTable("agents", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id")
@@ -533,6 +554,7 @@ export const toolExecutions = pgTable("tool_executions", {
 
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   members: many(organizationMembers),
+  apiKeys: many(apiKeys),
   agents: many(agents),
   googleCalendarIntegration: one(googleCalendarIntegrations),
   hubspotIntegration: one(hubspotIntegrations),
@@ -558,6 +580,18 @@ export const hubspotIntegrationsRelations = relations(hubspotIntegrations, ({ on
 
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(organizationMembers),
+  createdApiKeys: many(apiKeys),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [apiKeys.organizationId],
+    references: [organizations.id],
+  }),
+  createdBy: one(users, {
+    fields: [apiKeys.createdByUserId],
+    references: [users.id],
+  }),
 }));
 
 export const organizationMembersRelations = relations(
@@ -720,6 +754,8 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;
 export type NewOrganizationMember = typeof organizationMembers.$inferInsert;
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type NewApiKey = typeof apiKeys.$inferInsert;
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type PhoneNumber = typeof phoneNumbers.$inferSelect;

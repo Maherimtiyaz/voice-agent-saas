@@ -46,8 +46,8 @@ export default async function CallsPage() {
           <CardHeader>
             <CardTitle>No calls yet</CardTitle>
             <CardDescription>
-              Calls will show up here once a Twilio number is registered,
-              assigned to an agent, and dialed.
+              Calls will show up here when an agent handles an inbound call or
+              a campaign dispatches an outbound call.
             </CardDescription>
           </CardHeader>
         </Card>

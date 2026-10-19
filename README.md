@@ -10,8 +10,8 @@ transcripts), Google Calendar integration for real availability and
 appointment creation, HubSpot CRM synchronization for contacts and
 deals, and a first outbound-campaign MVP. Campaigns support consent-attested
 contact imports and manually dispatched, one-at-a-time Vapi calls. Billing
-and a public API are NOT implemented — see "What has NOT been implemented
-yet" below.
+is NOT implemented. A read-only, versioned public API is available with
+workspace API keys — see "Public API" below.
 
 ## Tech stack
 
@@ -37,6 +37,7 @@ app/
                                          calls/[id], analytics, settings
   actions/                            — Server Actions (thin wrappers
                                          around the service layer)
+  api/v1/agents, phone-numbers, calls — versioned read-only public API
   api/voice/twilio/inbound/route.ts   — Twilio inbound-call webhook
   api/voice/vapi/events/route.ts      — Vapi server-message webhook
   api/calendar/google/                — per-workspace Google OAuth connection
@@ -54,8 +55,10 @@ lib/
   password.ts, session.ts, slug.ts, cn.ts
 server/
   auth/current-user.ts                 — session → user → active org (the DAL)
+  public-api/                          — API key authentication and response helpers
   services/                            — business logic: auth, organization,
-                                          agent, phone-number, call, customer,
+                                          API keys, public API, agent,
+                                          phone-number, call, customer,
                                           appointment, job, analytics
   validation/                          — Zod schemas
   integrations/
@@ -227,9 +230,10 @@ anywhere.
 | `hubspot_integrations` | One encrypted HubSpot refresh token per organization.                 | unique `organization_id`; cascade delete |
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
+| `api_keys`           | Workspace-scoped public API credentials; stores only a SHA-256 hash.   | unique key hash; revocation timestamp; organization cascade delete |
 | `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, `vapi_assistant_id`. | `organization_id` cascade delete; `status` enum |
 | `phone_numbers`      | A Twilio number the org owns, optionally assigned to an agent. `vapi_phone_number_id` is filled in once the number has been imported into Vapi (required by the phone-call-bypass API — see "Manual setup"). | `twilio_number_sid` unique; `e164_number` unique; `agent_id` nullable, `ON DELETE SET NULL` |
-| `calls`              | One row per phone call. `status` is call-lifecycle state; `outcome` is a separate, nullable business-outcome summary (e.g. `appointment_booked`) set by the tool executor — never conflated with `status`. | `twilio_call_sid` unique; `vapi_call_id` unique; `agent_id`/`phone_number_id` NOT NULL, cascade delete |
+| `calls`              | One row per inbound or outbound phone call. `status` is call-lifecycle state; `outcome` is a separate, nullable business-outcome summary (e.g. `appointment_booked`) set by the tool executor — never conflated with `status`. | nullable `twilio_call_sid` unique; `vapi_call_id` unique; `agent_id`/`phone_number_id` NOT NULL, cascade delete |
 | `call_transcripts`   | Transcript lines. `sequence_number` is assigned by US (not the provider) so display order survives out-of-order webhook delivery. Only "final" transcript chunks are persisted — partials are filtered as noise. | unique `(call_id, sequence_number)`; cascade delete |
 | `webhook_events`     | Idempotency ledger for provider webhooks. `external_event_id` is a dedupe key WE derive (Twilio: the CallSid; Vapi: call id + message type + a hash of the payload) — neither provider hands us a documented stable event id. | unique `(provider, external_event_id)` |
 | `customers`          | Local customer record, linked to a HubSpot contact when CRM sync is enabled. | unique `(organization_id, phone)`; optional `hubspot_contact_id` |
@@ -369,7 +373,35 @@ automated account setup. You need to do the following yourself:
    with their contact. Disconnecting HubSpot stops remote synchronization;
    the local records continue working.
 
-### 8. Run tests
+### 8. Use the public API
+
+An owner or admin can create and revoke workspace API keys in **Settings**.
+The full key is displayed only once when created; only its SHA-256 hash is
+stored. Send the key in the `Authorization: Bearer <key>` header. Keys are
+workspace-scoped and read-only.
+
+Available endpoints:
+
+| Method | Endpoint | Result |
+|--------|----------|--------|
+| `GET` | `/api/v1/agents` | Safe agent fields for the workspace |
+| `GET` | `/api/v1/phone-numbers` | Registered numbers without provider credentials |
+| `GET` | `/api/v1/calls?limit=50&offset=0` | Paginated call summaries; `limit` is 1–100 |
+| `GET` | `/api/v1/calls/{callId}` | One workspace call and its transcript |
+
+Example:
+
+```bash
+curl "$APP_URL/api/v1/calls?limit=25" \
+  -H "Authorization: Bearer $VOICE_AGENT_API_KEY"
+```
+
+All responses are JSON and marked `Cache-Control: no-store`. Call list
+responses include a `pagination` object with `limit`, `offset`, and
+`hasMore`. The API does not yet provide write operations, webhooks, or
+rate limiting.
+
+### 9. Run tests
 
 ```bash
 npm test
@@ -379,7 +411,7 @@ Tests need no live database or provider credentials: service tests use an
 in-memory Postgres (pglite), and provider integrations use controlled HTTP
 responses and signature fixtures.
 
-### 9. Type-check and build
+### 10. Type-check and build
 
 ```bash
 npm run typecheck   # next typegen && tsc --noEmit
@@ -394,7 +426,7 @@ npm run build
 - A generic, user-configurable workflow engine
 - Scheduled campaigns, automated pacing/retries, durable campaign queues,
   Redis, BullMQ
-- Billing, a public API
+- Billing, public API write operations, API rate limiting and webhooks
 - RAG / knowledge base
 - Custom STT/TTS/voice orchestration, Twilio Media Streams
 - Human handoff beyond the single fixed `transfer_call` destination,

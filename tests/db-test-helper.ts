@@ -74,6 +74,20 @@ const SCHEMA_SQL = `
   create unique index organization_members_org_user_unique
     on organization_members (organization_id, user_id);
 
+  create table api_keys (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    created_by_user_id uuid references users (id) on delete set null,
+    name text not null,
+    key_prefix text not null,
+    key_hash text not null,
+    created_at timestamptz not null default now(),
+    last_used_at timestamptz,
+    revoked_at timestamptz
+  );
+  create unique index api_keys_key_hash_unique on api_keys (key_hash);
+  create index api_keys_organization_id_idx on api_keys (organization_id);
+
   create table agents (
     id uuid primary key default gen_random_uuid(),
     organization_id uuid not null references organizations (id) on delete cascade,
