@@ -1,10 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "@/db";
-import { agents } from "@/db/schema";
-import type { Agent } from "@/db/schema";
-import { NotFoundError } from "@/server/errors";
+import { agentKnowledgeFiles, agents } from "@/db/schema";
+import type { Agent, AgentKnowledgeFile, KnowledgeFileStatus } from "@/db/schema";
+import { ConflictError, NotFoundError } from "@/server/errors";
 import { requireMembership } from "@/server/services/organization.service";
 import type { CreateAgentInput } from "@/server/validation/agent";
+import { MAX_KNOWLEDGE_FILES_PER_AGENT } from "@/server/validation/knowledge-base";
 
 /**
  * Every function here takes the acting user's id and re-checks
@@ -62,20 +63,153 @@ export async function getAgent(
   return agent;
 }
 
-export async function setAgentVapiAssistantId(
+export async function setAgentVapiSyncState(
   db: Database,
-  params: { organizationId: string; userId: string; agentId: string; vapiAssistantId: string },
+  params: {
+    organizationId: string;
+    userId: string;
+    agentId: string;
+    vapiAssistantId: string;
+    vapiKnowledgeToolId: string | null;
+  },
 ): Promise<Agent> {
   // getAgent already enforces membership + org ownership of this agent id.
   await getAgent(db, params);
 
   const [updated] = await db
     .update(agents)
-    .set({ vapiAssistantId: params.vapiAssistantId, updatedAt: new Date() })
+    .set({
+      vapiAssistantId: params.vapiAssistantId,
+      vapiKnowledgeToolId: params.vapiKnowledgeToolId,
+      updatedAt: new Date(),
+    })
     .where(eq(agents.id, params.agentId))
     .returning();
 
   return updated;
+}
+
+export async function listAgentKnowledgeFiles(
+  db: Database,
+  params: { organizationId: string; userId: string; agentId: string },
+): Promise<AgentKnowledgeFile[]> {
+  await getAgent(db, params);
+  return db
+    .select()
+    .from(agentKnowledgeFiles)
+    .where(
+      and(
+        eq(agentKnowledgeFiles.organizationId, params.organizationId),
+        eq(agentKnowledgeFiles.agentId, params.agentId),
+      ),
+    )
+    .orderBy(desc(agentKnowledgeFiles.createdAt));
+}
+
+export async function addAgentKnowledgeFile(
+  db: Database,
+  params: {
+    organizationId: string;
+    userId: string;
+    agentId: string;
+    vapiFileId: string;
+    name: string;
+    bytes: number;
+    status: KnowledgeFileStatus;
+  },
+): Promise<AgentKnowledgeFile> {
+  await getAgent(db, params);
+  const existing = await db
+    .select({ id: agentKnowledgeFiles.id })
+    .from(agentKnowledgeFiles)
+    .where(
+      and(
+        eq(agentKnowledgeFiles.organizationId, params.organizationId),
+        eq(agentKnowledgeFiles.agentId, params.agentId),
+      ),
+    )
+    .limit(MAX_KNOWLEDGE_FILES_PER_AGENT);
+  if (existing.length >= MAX_KNOWLEDGE_FILES_PER_AGENT) {
+    throw new ConflictError(`An agent can have at most ${MAX_KNOWLEDGE_FILES_PER_AGENT} knowledge documents.`);
+  }
+
+  const [file] = await db
+    .insert(agentKnowledgeFiles)
+    .values({
+      organizationId: params.organizationId,
+      agentId: params.agentId,
+      vapiFileId: params.vapiFileId,
+      name: params.name,
+      bytes: params.bytes,
+      status: params.status,
+    })
+    .returning();
+  return file;
+}
+
+export async function setAgentKnowledgeFileStatus(
+  db: Database,
+  params: {
+    organizationId: string;
+    userId: string;
+    agentId: string;
+    fileId: string;
+    status: KnowledgeFileStatus;
+  },
+): Promise<void> {
+  await getAgent(db, params);
+  const [updated] = await db
+    .update(agentKnowledgeFiles)
+    .set({ status: params.status })
+    .where(
+      and(
+        eq(agentKnowledgeFiles.id, params.fileId),
+        eq(agentKnowledgeFiles.organizationId, params.organizationId),
+        eq(agentKnowledgeFiles.agentId, params.agentId),
+      ),
+    )
+    .returning({ id: agentKnowledgeFiles.id });
+  if (!updated) {
+    throw new NotFoundError("Knowledge document");
+  }
+}
+
+export async function getAgentKnowledgeFile(
+  db: Database,
+  params: { organizationId: string; userId: string; agentId: string; fileId: string },
+): Promise<AgentKnowledgeFile> {
+  await getAgent(db, params);
+  const [file] = await db
+    .select()
+    .from(agentKnowledgeFiles)
+    .where(
+      and(
+        eq(agentKnowledgeFiles.id, params.fileId),
+        eq(agentKnowledgeFiles.organizationId, params.organizationId),
+        eq(agentKnowledgeFiles.agentId, params.agentId),
+      ),
+    )
+    .limit(1);
+  if (!file) {
+    throw new NotFoundError("Knowledge document");
+  }
+  return file;
+}
+
+export async function removeAgentKnowledgeFile(
+  db: Database,
+  params: { organizationId: string; userId: string; agentId: string; fileId: string },
+): Promise<void> {
+  await getAgentKnowledgeFile(db, params);
+  await db
+    .delete(agentKnowledgeFiles)
+    .where(
+      and(
+        eq(agentKnowledgeFiles.id, params.fileId),
+        eq(agentKnowledgeFiles.organizationId, params.organizationId),
+        eq(agentKnowledgeFiles.agentId, params.agentId),
+      ),
+    );
 }
 
 export async function updateAgentConfig(

@@ -13,6 +13,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     language: "en",
     status: "draft",
     vapiAssistantId: null,
+    vapiKnowledgeToolId: null,
     transferNumber: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -52,5 +53,28 @@ describe("buildAssistantPayload", () => {
     const agent = makeAgent();
     const payload = buildAssistantPayload(agent, "https://example.com/api/voice/vapi/events");
     expect(payload.serverUrl).toBe("https://example.com/api/voice/vapi/events");
+  });
+
+  it("attaches the knowledge query tool without replacing local tools", () => {
+    const payload = buildAssistantPayload(
+      makeAgent(),
+      "https://example.com/api/voice/vapi/events",
+      "vapi-query-tool",
+    );
+
+    expect(payload.model.toolIds).toEqual(["vapi-query-tool"]);
+    expect(payload.model.tools).toHaveLength(7);
+    expect(payload.model.messages[0].content).toContain("knowledge base query tool");
+  });
+
+  it("clears attached knowledge tools when syncing without a knowledge base", () => {
+    const payload = buildAssistantPayload(
+      makeAgent(),
+      "https://example.com/api/voice/vapi/events",
+      null,
+    );
+
+    expect(payload.model.toolIds).toEqual([]);
+    expect(payload.model.messages[0].content).not.toContain("knowledge base query tool");
   });
 });

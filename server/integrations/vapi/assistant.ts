@@ -26,6 +26,7 @@ export interface VapiAssistantPayload {
     model: string;
     messages: Array<{ role: "system"; content: string }>;
     tools?: VapiFunctionDefinition[];
+    toolIds?: string[];
   };
   voice?: VapiVoiceConfig;
   transcriber?: { provider: "deepgram"; language: string };
@@ -51,9 +52,12 @@ export interface VapiAssistantPayload {
 export function buildAssistantPayload(
   agent: Agent,
   serverUrl: string,
+  knowledgeToolId?: string | null,
 ): VapiAssistantPayload {
   ensureToolsRegistered();
 
+  const basePrompt = agent.systemPrompt?.trim() || `You are ${agent.name}, a helpful phone assistant.`;
+  const hasKnowledgeTool = Boolean(knowledgeToolId);
   const payload: VapiAssistantPayload = {
     name: agent.name,
     model: {
@@ -62,13 +66,19 @@ export function buildAssistantPayload(
       messages: [
         {
           role: "system",
-          content: agent.systemPrompt?.trim() || `You are ${agent.name}, a helpful phone assistant.`,
+          content: hasKnowledgeTool
+            ? `${basePrompt}\n\nUse the knowledge base query tool to answer relevant questions about the company. If the documents do not contain the answer, say you don't know rather than guessing.`
+            : basePrompt,
         },
       ],
       tools: buildVapiToolDefinitions(),
     },
     serverUrl,
   };
+
+  if (knowledgeToolId !== undefined) {
+    payload.model.toolIds = knowledgeToolId ? [knowledgeToolId] : [];
+  }
 
   if (isVapiVoiceConfig(agent.voiceConfig)) {
     payload.voice = agent.voiceConfig;
@@ -98,8 +108,9 @@ interface VapiAssistantResponse {
 export async function syncAssistantWithVapi(
   agent: Agent,
   serverUrl: string,
+  knowledgeToolId?: string | null,
 ): Promise<string> {
-  const payload = buildAssistantPayload(agent, serverUrl);
+  const payload = buildAssistantPayload(agent, serverUrl, knowledgeToolId);
 
   const response = agent.vapiAssistantId
     ? await vapiRequest<VapiAssistantResponse>(`/assistant/${agent.vapiAssistantId}`, {

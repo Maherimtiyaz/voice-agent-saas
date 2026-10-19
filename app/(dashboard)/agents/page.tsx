@@ -6,6 +6,8 @@ import { listAgents } from "@/server/services/agent.service";
 import { CreateAgentForm } from "./create-agent-form";
 import { SyncAgentButton } from "./sync-agent-button";
 import { AgentConfigForm } from "./agent-config-form";
+import { AgentKnowledgeBase } from "./agent-knowledge-base";
+import { listAgentKnowledgeFiles } from "@/server/services/agent.service";
 
 export const metadata: Metadata = {
   title: "Agents",
@@ -20,6 +22,17 @@ const STATUS_STYLES: Record<string, string> = {
 export default async function AgentsPage() {
   const { user, organizationId } = await requireCurrentContext();
   const agents = await listAgents(db, { organizationId, userId: user.id });
+  const knowledgeFilesByAgent = await Promise.all(
+    agents.map(async (agent) => [
+      agent.id,
+      await listAgentKnowledgeFiles(db, {
+        organizationId,
+        userId: user.id,
+        agentId: agent.id,
+      }),
+    ] as const),
+  );
+  const knowledgeFiles = new Map(knowledgeFilesByAgent);
 
   return (
     <div className="flex flex-col gap-6">
@@ -78,6 +91,10 @@ export default async function AgentsPage() {
                 agentId={agent.id}
                 systemPrompt={agent.systemPrompt}
                 transferNumber={agent.transferNumber}
+              />
+              <AgentKnowledgeBase
+                agentId={agent.id}
+                files={knowledgeFiles.get(agent.id) ?? []}
               />
             </div>
           ))}

@@ -10,8 +10,9 @@ transcripts), Google Calendar integration for real availability and
 appointment creation, HubSpot CRM synchronization for contacts and
 deals, and a first outbound-campaign MVP. Campaigns support consent-attested
 contact imports and manually dispatched, one-at-a-time Vapi calls. Billing
-is NOT implemented. A read-only, versioned public API is available with
-workspace API keys — see "Public API" below.
+is NOT implemented. Agents can also use Vapi-managed, per-agent knowledge
+bases sourced from uploaded documents. A read-only, versioned public API is
+available with workspace API keys — see "Public API" below.
 
 ## Tech stack
 
@@ -68,7 +69,8 @@ server/
                                            HubSpot contacts and deals
     twilio/verify.ts, twiml.ts,        — signature verification, TwiML
       sms.ts, transfer.ts                helpers, SMS send, live-call transfer
-    vapi/client.ts, assistant.ts,      — REST client, assistant sync,
+    vapi/client.ts, assistant.ts,      — REST client, assistant and
+      knowledge-base.ts                  knowledge tool sync,
       call.ts, verify.ts,                phone-call-bypass, webhook secret
       webhook-schemas.ts                 check, webhook payload schemas
   tools/
@@ -231,7 +233,8 @@ anywhere.
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
 | `api_keys`           | Workspace-scoped public API credentials; stores only a SHA-256 hash.   | unique key hash; revocation timestamp; organization cascade delete |
-| `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, `vapi_assistant_id`. | `organization_id` cascade delete; `status` enum |
+| `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, Vapi assistant id, and optional knowledge query-tool id. | `organization_id` cascade delete; `status` enum |
+| `agent_knowledge_files` | Per-agent document metadata and Vapi file id/status; file contents remain in Vapi. | organization/agent cascade delete; unique Vapi file id; processing-status enum |
 | `phone_numbers`      | A Twilio number the org owns, optionally assigned to an agent. `vapi_phone_number_id` is filled in once the number has been imported into Vapi (required by the phone-call-bypass API — see "Manual setup"). | `twilio_number_sid` unique; `e164_number` unique; `agent_id` nullable, `ON DELETE SET NULL` |
 | `calls`              | One row per inbound or outbound phone call. `status` is call-lifecycle state; `outcome` is a separate, nullable business-outcome summary (e.g. `appointment_booked`) set by the tool executor — never conflated with `status`. | nullable `twilio_call_sid` unique; `vapi_call_id` unique; `agent_id`/`phone_number_id` NOT NULL, cascade delete |
 | `call_transcripts`   | Transcript lines. `sequence_number` is assigned by US (not the provider) so display order survives out-of-order webhook delivery. Only "final" transcript chunks are persisted — partials are filtered as noise. | unique `(call_id, sequence_number)`; cascade delete |
@@ -327,6 +330,24 @@ automated account setup. You need to do the following yourself:
    `/phone-numbers`, register the number from step 1 with the Vapi phone
    number ID from step 3, and assign it to the agent.
 6. Call the number.
+
+### Agent knowledge bases
+
+On `/agents`, upload up to 20 documents per agent (300 KiB maximum per
+document). Supported extensions include PDF, DOC/DOCX, TXT, CSV, Markdown,
+TSV, YAML, JSON, XML, and LOG. Vapi processes uploaded files asynchronously.
+Use **Sync to Vapi** to refresh processing status; when all files are ready,
+the same sync attaches the Vapi query tool. If processing is still underway,
+sync again later. Re-sync after adding or removing documents to refresh the
+assistant's tool configuration. Each agent has a separate Vapi knowledge
+tool and file set. The assistant is instructed to use the query tool for
+company-specific questions and avoid guessing when the documents do not
+contain an answer.
+
+Knowledge document metadata and provider file/tool IDs are stored in this
+app's database; document contents are uploaded to Vapi. Deleting a document
+also deletes the remote Vapi file. Keep `VAPI_PRIVATE_API_KEY` configured
+and apply the latest database schema before using this feature.
 
 ### 6. Connect Google Calendar (optional for inbound calls; required for booking tools)
 
@@ -427,7 +448,6 @@ npm run build
 - Scheduled campaigns, automated pacing/retries, durable campaign queues,
   Redis, BullMQ
 - Billing, public API write operations, API rate limiting and webhooks
-- RAG / knowledge base
 - Custom STT/TTS/voice orchestration, Twilio Media Streams
 - Human handoff beyond the single fixed `transfer_call` destination,
   sentiment analysis

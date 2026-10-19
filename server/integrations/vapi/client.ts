@@ -34,13 +34,24 @@ export async function vapiRequest<TResponse>(
   path: string,
   init: { method: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown },
 ): Promise<TResponse> {
+  const isFormData = init.body instanceof FormData;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${getPrivateApiKey()}`,
+  };
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
+  let body: BodyInit | undefined;
+  if (init.body instanceof FormData) {
+    body = init.body;
+  } else if (init.body !== undefined) {
+    body = JSON.stringify(init.body);
+  }
+
   const response = await fetch(`${VAPI_API_BASE_URL}${path}`, {
     method: init.method,
-    headers: {
-      Authorization: `Bearer ${getPrivateApiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+    headers,
+    body,
     // Voice webhook paths are latency-sensitive; don't let a slow/hung
     // Vapi API call block the Twilio response indefinitely.
     signal: AbortSignal.timeout(8_000),

@@ -28,6 +28,7 @@ export function SyncAgentButton({
       <input type="hidden" name="agentId" value={agentId} />
       <SubmitButton hasSynced={hasSynced} />
       {state?.message && <p className="text-sm text-danger">{state.message}</p>}
+      {state?.success && <p className="text-sm text-accent">{state.success}</p>}
     </form>
   );
 }

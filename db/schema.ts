@@ -114,6 +114,12 @@ export const campaignContactStatusEnum = pgEnum("campaign_contact_status", [
   "no_answer",
 ]);
 
+export const knowledgeFileStatusEnum = pgEnum("knowledge_file_status", [
+  "processing",
+  "done",
+  "failed",
+]);
+
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -234,6 +240,7 @@ export const agents = pgTable("agents", {
   // Null until then — sync is an explicit, manually-triggered action, not
   // automatic on every create/update (see server/integrations/vapi).
   vapiAssistantId: text("vapi_assistant_id"),
+  vapiKnowledgeToolId: text("vapi_knowledge_tool_id"),
   // Pre-approved live-transfer destination (Phase 1.1 tool framework).
   // Deliberately NOT settable by the LLM at call time — see
   // server/tools/definitions/transfer-call.ts. Null means transfers are
@@ -246,6 +253,32 @@ export const agents = pgTable("agents", {
     .notNull()
     .defaultNow(),
 });
+
+export const agentKnowledgeFiles = pgTable("agent_knowledge_files", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  vapiFileId: text("vapi_file_id").notNull(),
+  name: text("name").notNull(),
+  bytes: integer("bytes").notNull(),
+  status: knowledgeFileStatusEnum("status").notNull().default("processing"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  vapiFileUnique: uniqueIndex("agent_knowledge_files_vapi_file_unique").on(
+    table.vapiFileId,
+  ),
+  agentIdx: index("agent_knowledge_files_agent_id_idx").on(table.agentId),
+  organizationAgentIdx: index("agent_knowledge_files_organization_agent_idx").on(
+    table.organizationId,
+    table.agentId,
+  ),
+}));
 
 /**
  * Phase 1: inbound voice calling.
@@ -616,6 +649,7 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
   phoneNumbers: many(phoneNumbers),
   calls: many(calls),
   campaigns: many(campaigns),
+  knowledgeFiles: many(agentKnowledgeFiles),
 }));
 
 export const phoneNumbersRelations = relations(phoneNumbers, ({ one, many }) => ({
@@ -678,6 +712,20 @@ export const campaignContactsRelations = relations(campaignContacts, ({ one, man
   }),
   calls: many(calls),
 }));
+
+export const agentKnowledgeFilesRelations = relations(
+  agentKnowledgeFiles,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [agentKnowledgeFiles.organizationId],
+      references: [organizations.id],
+    }),
+    agent: one(agents, {
+      fields: [agentKnowledgeFiles.agentId],
+      references: [agents.id],
+    }),
+  }),
+);
 
 export const callTranscriptsRelations = relations(callTranscripts, ({ one }) => ({
   call: one(calls, {
@@ -758,6 +806,8 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
+export type AgentKnowledgeFile = typeof agentKnowledgeFiles.$inferSelect;
+export type NewAgentKnowledgeFile = typeof agentKnowledgeFiles.$inferInsert;
 export type PhoneNumber = typeof phoneNumbers.$inferSelect;
 export type NewPhoneNumber = typeof phoneNumbers.$inferInsert;
 export type Campaign = typeof campaigns.$inferSelect;
@@ -786,6 +836,7 @@ export type CallOutcome = (typeof callOutcomeEnum.enumValues)[number];
 export type CampaignStatus = (typeof campaignStatusEnum.enumValues)[number];
 export type CampaignContactStatus =
   (typeof campaignContactStatusEnum.enumValues)[number];
+export type KnowledgeFileStatus = (typeof knowledgeFileStatusEnum.enumValues)[number];
 export type TranscriptRole = (typeof transcriptRoleEnum.enumValues)[number];
 export type WebhookProvider = (typeof webhookProviderEnum.enumValues)[number];
 export type AppointmentStatus = (typeof appointmentStatusEnum.enumValues)[number];

@@ -23,6 +23,7 @@ const SCHEMA_SQL = `
   create type call_outcome as enum ('appointment_booked', 'job_created', 'transferred_to_human', 'sms_sent');
   create type campaign_status as enum ('draft', 'active', 'paused', 'completed');
   create type campaign_contact_status as enum ('pending', 'calling', 'completed', 'failed', 'no_answer');
+  create type knowledge_file_status as enum ('processing', 'done', 'failed');
 
   create table organizations (
     id uuid primary key default gen_random_uuid(),
@@ -98,10 +99,27 @@ const SCHEMA_SQL = `
     language text not null default 'en',
     status agent_status not null default 'draft',
     vapi_assistant_id text,
+    vapi_knowledge_tool_id text,
     transfer_number text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
+
+  create table agent_knowledge_files (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    agent_id uuid not null references agents (id) on delete cascade,
+    vapi_file_id text not null,
+    name text not null,
+    bytes integer not null,
+    status knowledge_file_status not null default 'processing',
+    created_at timestamptz not null default now()
+  );
+  create unique index agent_knowledge_files_vapi_file_unique
+    on agent_knowledge_files (vapi_file_id);
+  create index agent_knowledge_files_agent_id_idx on agent_knowledge_files (agent_id);
+  create index agent_knowledge_files_organization_agent_idx
+    on agent_knowledge_files (organization_id, agent_id);
 
   create table phone_numbers (
     id uuid primary key default gen_random_uuid(),

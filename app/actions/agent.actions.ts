@@ -4,9 +4,30 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireCurrentContext } from "@/server/auth/current-user";
 import { AppError } from "@/server/errors";
-import { createAgent, getAgent, setAgentVapiAssistantId, updateAgentConfig } from "@/server/services/agent.service";
+import {
+  addAgentKnowledgeFile,
+  createAgent,
+  getAgent,
+  getAgentKnowledgeFile,
+  listAgentKnowledgeFiles,
+  removeAgentKnowledgeFile,
+  setAgentKnowledgeFileStatus,
+  setAgentVapiSyncState,
+  updateAgentConfig,
+} from "@/server/services/agent.service";
 import { createAgentSchema, updateAgentConfigSchema } from "@/server/validation/agent";
 import { syncAssistantWithVapi } from "@/server/integrations/vapi/assistant";
+import {
+  deleteVapiKnowledgeFile,
+  deleteVapiKnowledgeTool,
+  getVapiKnowledgeFile,
+  syncVapiKnowledgeTool,
+  uploadVapiKnowledgeFile,
+} from "@/server/integrations/vapi/knowledge-base";
+import {
+  MAX_KNOWLEDGE_FILES_PER_AGENT,
+  validateKnowledgeFile,
+} from "@/server/validation/knowledge-base";
 
 export interface AgentFormState {
   success?: boolean;
@@ -92,6 +113,7 @@ export async function updateAgentConfigAction(
 
 export interface SyncAgentFormState {
   message?: string;
+  success?: string;
 }
 
 /**
@@ -119,24 +141,190 @@ export async function syncAgentWithVapiAction(
 
   try {
     const agent = await getAgent(db, { organizationId, userId: user.id, agentId });
-    const vapiAssistantId = await syncAssistantWithVapi(
-      agent,
-      `${appUrl}/api/voice/vapi/events`,
+    let files = await listAgentKnowledgeFiles(db, {
+      organizationId,
+      userId: user.id,
+      agentId,
+    });
+
+    await Promise.all(
+      files
+        .filter((file) => file.status === "processing")
+        .map(async (file) => {
+          const current = await getVapiKnowledgeFile(file.vapiFileId);
+          await setAgentKnowledgeFileStatus(db, {
+            organizationId,
+            userId: user.id,
+            agentId,
+            fileId: file.id,
+            status: current.status,
+          });
+        }),
     );
-    await setAgentVapiAssistantId(db, {
+
+    files = await listAgentKnowledgeFiles(db, { organizationId, userId: user.id, agentId });
+    if (files.some((file) => file.status === "processing")) {
+      revalidatePath("/agents");
+      return { message: "Vapi is still processing a document. Sync again when processing is complete." };
+    }
+    if (files.some((file) => file.status === "failed")) {
+      revalidatePath("/agents");
+      return { message: "A document failed processing in Vapi. Remove it before syncing this agent." };
+    }
+
+    const previousToolId = agent.vapiKnowledgeToolId;
+    const knowledgeToolId = files.length
+      ? await syncVapiKnowledgeTool(
+          agent.id,
+          files.map((file) => file.vapiFileId),
+          previousToolId,
+        )
+      : null;
+
+    let vapiAssistantId: string;
+    try {
+      vapiAssistantId = await syncAssistantWithVapi(
+        agent,
+        `${appUrl}/api/voice/vapi/events`,
+        knowledgeToolId,
+      );
+    } catch (error) {
+      if (knowledgeToolId && !previousToolId) {
+        try {
+          await deleteVapiKnowledgeTool(knowledgeToolId);
+        } catch (cleanupError) {
+          console.error(`[agents] Failed to remove orphaned Vapi tool ${knowledgeToolId}`, cleanupError);
+        }
+      }
+      throw error;
+    }
+    if (!knowledgeToolId && previousToolId) {
+      await deleteVapiKnowledgeTool(previousToolId);
+    }
+    await setAgentVapiSyncState(db, {
       organizationId,
       userId: user.id,
       agentId,
       vapiAssistantId,
+      vapiKnowledgeToolId: knowledgeToolId,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      revalidatePath("/agents");
+      return { message: error.message };
+    }
+    console.error(`[agents] Vapi sync failed for agent ${agentId}`, error);
+    revalidatePath("/agents");
+    return { message: "Couldn't sync this agent to Vapi. Check server logs for details." };
+  }
+
+  revalidatePath("/agents");
+  return { success: "Agent synced to Vapi." };
+}
+
+export interface KnowledgeFileActionState {
+  message?: string;
+  success?: string;
+}
+
+export async function uploadAgentKnowledgeFileAction(
+  _prevState: KnowledgeFileActionState | undefined,
+  formData: FormData,
+): Promise<KnowledgeFileActionState> {
+  const agentId = formData.get("agentId");
+  const file = formData.get("file");
+  if (typeof agentId !== "string" || !agentId) {
+    return { message: "Missing agent id." };
+  }
+  if (!(file instanceof File)) {
+    return { message: "Choose a document to upload." };
+  }
+  const validationError = validateKnowledgeFile(file);
+  if (validationError) {
+    return { message: validationError };
+  }
+
+  const { user, organizationId } = await requireCurrentContext();
+  let remoteFileId: string | undefined;
+  try {
+    await getAgent(db, { organizationId, userId: user.id, agentId });
+    const currentFiles = await listAgentKnowledgeFiles(db, {
+      organizationId,
+      userId: user.id,
+      agentId,
+    });
+    if (currentFiles.length >= MAX_KNOWLEDGE_FILES_PER_AGENT) {
+      return {
+        message: `An agent can have at most ${MAX_KNOWLEDGE_FILES_PER_AGENT} knowledge documents.`,
+      };
+    }
+
+    const remoteFile = await uploadVapiKnowledgeFile(file);
+    remoteFileId = remoteFile.id;
+    const safeName = (file.name.split(/[\\/]/).pop() ?? "document")
+      .replace(/[^\w .-]/g, "_")
+      .slice(0, 160);
+    await addAgentKnowledgeFile(db, {
+      organizationId,
+      userId: user.id,
+      agentId,
+      vapiFileId: remoteFile.id,
+      name: safeName || "document",
+      bytes: file.size,
+      status: remoteFile.status,
+    });
+  } catch (error) {
+    if (remoteFileId) {
+      try {
+        await deleteVapiKnowledgeFile(remoteFileId);
+      } catch (cleanupError) {
+        console.error(`[agents] Failed to remove orphaned Vapi file ${remoteFileId}`, cleanupError);
+      }
+    }
+    if (error instanceof AppError) {
+      return { message: error.message };
+    }
+    console.error(`[agents] Knowledge file upload failed for agent ${agentId}`, error);
+    return { message: "Couldn't upload this document. Check server logs for details." };
+  }
+
+  revalidatePath("/agents");
+  return { success: "Document uploaded. Sync the agent to refresh its processing status." };
+}
+
+export async function removeAgentKnowledgeFileAction(
+  _prevState: KnowledgeFileActionState | undefined,
+  formData: FormData,
+): Promise<KnowledgeFileActionState> {
+  const agentId = formData.get("agentId");
+  const fileId = formData.get("fileId");
+  if (typeof agentId !== "string" || !agentId || typeof fileId !== "string" || !fileId) {
+    return { message: "Missing agent or document id." };
+  }
+
+  const { user, organizationId } = await requireCurrentContext();
+  try {
+    const file = await getAgentKnowledgeFile(db, {
+      organizationId,
+      userId: user.id,
+      agentId,
+      fileId,
+    });
+    await deleteVapiKnowledgeFile(file.vapiFileId);
+    await removeAgentKnowledgeFile(db, {
+      organizationId,
+      userId: user.id,
+      agentId,
+      fileId,
     });
   } catch (error) {
     if (error instanceof AppError) {
       return { message: error.message };
     }
-    console.error(`[agents] Vapi sync failed for agent ${agentId}`, error);
-    return { message: "Couldn't sync this agent to Vapi. Check server logs for details." };
+    console.error(`[agents] Knowledge file removal failed for agent ${agentId}`, error);
+    return { message: "Couldn't remove this document. Check server logs for details." };
   }
 
   revalidatePath("/agents");
-  return {};
+  return { success: "Document removed. Sync the agent to update its knowledge tool." };
 }
