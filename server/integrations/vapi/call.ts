@@ -16,6 +16,36 @@ export interface CreateBypassCallResult {
   twiml: string;
 }
 
+export interface CreateOutboundCallParams {
+  vapiPhoneNumberId: string;
+  assistantId: string;
+  customerNumber: string;
+}
+
+/**
+ * Starts a Vapi-managed outbound call using the imported Twilio caller ID.
+ * Unlike inbound phone-call bypass, Vapi initiates this call and returns
+ * only its call id; subsequent lifecycle events use the normal webhook.
+ */
+export async function createOutboundCall(
+  params: CreateOutboundCallParams,
+): Promise<{ vapiCallId: string }> {
+  const response = await vapiRequest<{ id: string }>("/call", {
+    method: "POST",
+    body: {
+      phoneNumberId: params.vapiPhoneNumberId,
+      assistantId: params.assistantId,
+      customer: { number: params.customerNumber },
+    },
+  });
+
+  if (!response.id) {
+    throw new Error("Vapi did not return an id for the outbound call.");
+  }
+
+  return { vapiCallId: response.id };
+}
+
 interface VapiBypassCallResponse {
   id: string;
   phoneCallProviderDetails?: { twiml?: string };

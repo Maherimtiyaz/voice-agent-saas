@@ -35,6 +35,12 @@ export const transferCallTool: ToolDefinition<z.infer<typeof inputSchema>> = {
     if (!call) {
       return { success: false, error: "Could not resolve this call." };
     }
+    if (!call.twilioCallSid) {
+      return {
+        success: false,
+        error: "Call transfer is unavailable for outbound campaign calls.",
+      };
+    }
 
     try {
       await transferLiveCall({

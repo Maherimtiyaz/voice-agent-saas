@@ -21,6 +21,8 @@ const SCHEMA_SQL = `
   create type job_status as enum ('open', 'in_progress', 'completed', 'cancelled');
   create type tool_execution_status as enum ('success', 'failure');
   create type call_outcome as enum ('appointment_booked', 'job_created', 'transferred_to_human', 'sms_sent');
+  create type campaign_status as enum ('draft', 'active', 'paused', 'completed');
+  create type campaign_contact_status as enum ('pending', 'calling', 'completed', 'failed', 'no_answer');
 
   create table organizations (
     id uuid primary key default gen_random_uuid(),
@@ -101,12 +103,40 @@ const SCHEMA_SQL = `
   create unique index phone_numbers_twilio_sid_unique on phone_numbers (twilio_number_sid);
   create unique index phone_numbers_e164_unique on phone_numbers (e164_number);
 
+  create table campaigns (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    name text not null,
+    agent_id uuid not null references agents (id) on delete restrict,
+    phone_number_id uuid not null references phone_numbers (id) on delete restrict,
+    status campaign_status not null default 'draft',
+    active_contact_id uuid,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create index campaigns_organization_id_idx on campaigns (organization_id);
+
+  create table campaign_contacts (
+    id uuid primary key default gen_random_uuid(),
+    campaign_id uuid not null references campaigns (id) on delete cascade,
+    phone_number text not null,
+    consent_confirmed_at timestamptz not null,
+    consent_confirmed_by_user_id uuid not null references users (id) on delete restrict,
+    status campaign_contact_status not null default 'pending',
+    created_at timestamptz not null default now()
+  );
+  create unique index campaign_contacts_campaign_phone_unique
+    on campaign_contacts (campaign_id, phone_number);
+  create index campaign_contacts_campaign_status_idx
+    on campaign_contacts (campaign_id, status);
+
   create table calls (
     id uuid primary key default gen_random_uuid(),
     organization_id uuid not null references organizations (id) on delete cascade,
     agent_id uuid not null references agents (id) on delete cascade,
     phone_number_id uuid not null references phone_numbers (id) on delete cascade,
-    twilio_call_sid text not null,
+    campaign_contact_id uuid references campaign_contacts (id) on delete set null,
+    twilio_call_sid text,
     vapi_call_id text,
     from_number text not null,
     to_number text not null,

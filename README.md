@@ -7,9 +7,11 @@ workflows like booking appointments or creating CRM records.
 **Current state: Phase 0 (auth, organizations/workspaces, dashboard shell)
 plus Phase 1 (real inbound calling — Twilio + Vapi, call history,
 transcripts), Google Calendar integration for real availability and
-appointment creation, and HubSpot CRM synchronization for contacts and
-deals. Outbound campaigns, billing, and a public API are NOT implemented —
-see "What has NOT been implemented yet" below.
+appointment creation, HubSpot CRM synchronization for contacts and
+deals, and a first outbound-campaign MVP. Campaigns support consent-attested
+contact imports and manually dispatched, one-at-a-time Vapi calls. Billing
+and a public API are NOT implemented — see "What has NOT been implemented
+yet" below.
 
 ## Tech stack
 
@@ -31,8 +33,8 @@ see "What has NOT been implemented yet" below.
 app/
   (auth)/login, (auth)/register       — public auth pages + client forms
   (dashboard)/                        — protected shell: dashboard, agents,
-                                         phone-numbers, calls, calls/[id],
-                                         analytics, settings
+                                         campaigns, phone-numbers, calls,
+                                         calls/[id], analytics, settings
   actions/                            — Server Actions (thin wrappers
                                          around the service layer)
   api/voice/twilio/inbound/route.ts   — Twilio inbound-call webhook
@@ -390,7 +392,8 @@ npm run build
 - Calendar provider alternatives (for now, only Google Calendar is supported)
 - HubSpot bulk backfill for pre-existing jobs, and multi-provider CRM support
 - A generic, user-configurable workflow engine
-- Outbound campaigns, campaign queues, Redis, BullMQ
+- Scheduled campaigns, automated pacing/retries, durable campaign queues,
+  Redis, BullMQ
 - Billing, a public API
 - RAG / knowledge base
 - Custom STT/TTS/voice orchestration, Twilio Media Streams

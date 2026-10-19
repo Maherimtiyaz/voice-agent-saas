@@ -57,8 +57,12 @@ export default async function CallDetailPage({
             <dd className="font-mono text-foreground">{call.phoneNumberE164}</dd>
           </div>
           <div>
-            <dt className="text-muted">Caller</dt>
-            <dd className="font-mono text-foreground">{call.fromNumber}</dd>
+            <dt className="text-muted">
+              {call.campaignContactId ? "Recipient" : "Caller"}
+            </dt>
+            <dd className="font-mono text-foreground">
+              {call.campaignContactId ? call.toNumber : call.fromNumber}
+            </dd>
           </div>
           <div>
             <dt className="text-muted">Status</dt>

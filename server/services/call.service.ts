@@ -10,6 +10,7 @@ import {
 import type { Call, CallStatus, CallTranscript, CallOutcome, TranscriptRole, WebhookProvider } from "@/db/schema";
 import { NotFoundError } from "@/server/errors";
 import { isUniqueViolation } from "@/server/db-errors";
+import { finishCampaignContact } from "@/server/services/campaign.service";
 import { requireMembership } from "@/server/services/organization.service";
 
 
@@ -65,6 +66,66 @@ export async function startCall(db: Database, params: StartCallParams): Promise<
     }
     throw error;
   }
+}
+
+export async function startCampaignCall(
+  db: Database,
+  params: {
+    organizationId: string;
+    agentId: string;
+    phoneNumberId: string;
+    campaignContactId: string;
+    fromNumber: string;
+    toNumber: string;
+  },
+): Promise<Call> {
+  const [call] = await db
+    .insert(calls)
+    .values({
+      organizationId: params.organizationId,
+      agentId: params.agentId,
+      phoneNumberId: params.phoneNumberId,
+      campaignContactId: params.campaignContactId,
+      fromNumber: params.fromNumber,
+      toNumber: params.toNumber,
+      status: "ringing",
+    })
+    .returning();
+
+  return call;
+}
+
+export async function setCampaignCallVapiId(
+  db: Database,
+  params: { callId: string; vapiCallId: string },
+): Promise<Call> {
+  const [call] = await db
+    .update(calls)
+    .set({ vapiCallId: params.vapiCallId, updatedAt: new Date() })
+    .where(eq(calls.id, params.callId))
+    .returning();
+
+  if (!call) throw new NotFoundError("Call");
+  return call;
+}
+
+export async function failCampaignCall(
+  db: Database,
+  params: { callId: string; campaignContactId: string; reason: string },
+): Promise<void> {
+  await db
+    .update(calls)
+    .set({
+      status: "failed",
+      endedReason: params.reason,
+      endedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(calls.id, params.callId));
+  await finishCampaignContact(db, {
+    contactId: params.campaignContactId,
+    status: "failed",
+  });
 }
 
 export interface RecordFailedCallParams {
@@ -218,10 +279,11 @@ export async function applyEndOfCallReport(
 
   const endedAt = params.endedAtMs ? new Date(params.endedAtMs) : new Date();
 
+  const finalStatus = resolveFinalStatus(params.endedReason);
   const [updated] = await db
     .update(calls)
     .set({
-      status: resolveFinalStatus(params.endedReason),
+      status: finalStatus,
       endedReason: params.endedReason ?? null,
       endedAt,
       durationSeconds: params.durationSeconds ?? null,
@@ -229,6 +291,18 @@ export async function applyEndOfCallReport(
     })
     .where(eq(calls.id, call.id))
     .returning();
+
+  if (call.campaignContactId) {
+    await finishCampaignContact(db, {
+      contactId: call.campaignContactId,
+      status:
+        finalStatus === "failed"
+          ? "failed"
+          : finalStatus === "no_answer" || finalStatus === "voicemail"
+            ? "no_answer"
+            : "completed",
+    });
+  }
 
   if (params.summary) {
     await appendTranscript(db, {
@@ -359,6 +433,7 @@ export async function listCalls(
       organizationId: calls.organizationId,
       agentId: calls.agentId,
       phoneNumberId: calls.phoneNumberId,
+      campaignContactId: calls.campaignContactId,
       twilioCallSid: calls.twilioCallSid,
       vapiCallId: calls.vapiCallId,
       fromNumber: calls.fromNumber,
@@ -398,6 +473,7 @@ export async function getCallDetail(
       organizationId: calls.organizationId,
       agentId: calls.agentId,
       phoneNumberId: calls.phoneNumberId,
+      campaignContactId: calls.campaignContactId,
       twilioCallSid: calls.twilioCallSid,
       vapiCallId: calls.vapiCallId,
       fromNumber: calls.fromNumber,

@@ -38,7 +38,7 @@ export default async function CallsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Calls</h1>
-        <p className="text-sm text-muted">Inbound calls handled by your agents.</p>
+        <p className="text-sm text-muted">Inbound calls and outbound campaign calls.</p>
       </div>
 
       {calls.length === 0 ? (
@@ -57,7 +57,7 @@ export default async function CallsPage() {
             <thead className="border-b border-border text-xs uppercase tracking-wide text-muted">
               <tr>
                 <th className="px-4 py-3 font-medium">Started</th>
-                <th className="px-4 py-3 font-medium">Caller</th>
+                <th className="px-4 py-3 font-medium">Caller / recipient</th>
                 <th className="px-4 py-3 font-medium">Agent</th>
                 <th className="px-4 py-3 font-medium">Duration</th>
                 <th className="px-4 py-3 font-medium">Status</th>
@@ -77,7 +77,9 @@ export default async function CallsPage() {
                       })}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-foreground">{call.fromNumber}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-foreground">
+                    {call.campaignContactId ? call.toNumber : call.fromNumber}
+                  </td>
                   <td className="px-4 py-3 text-foreground">{call.agentName}</td>
                   <td className="px-4 py-3 text-foreground">{formatDuration(call.durationSeconds)}</td>
                   <td className="px-4 py-3">

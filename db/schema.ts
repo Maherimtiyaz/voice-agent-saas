@@ -99,6 +99,21 @@ export const callOutcomeEnum = pgEnum("call_outcome", [
   "sms_sent",
 ]);
 
+export const campaignStatusEnum = pgEnum("campaign_status", [
+  "draft",
+  "active",
+  "paused",
+  "completed",
+]);
+
+export const campaignContactStatusEnum = pgEnum("campaign_contact_status", [
+  "pending",
+  "calling",
+  "completed",
+  "failed",
+  "no_answer",
+]);
+
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -250,6 +265,57 @@ export const phoneNumbers = pgTable("phone_numbers", {
   e164Unique: uniqueIndex("phone_numbers_e164_unique").on(table.e164Number),
 }));
 
+export const campaigns = pgTable("campaigns", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "restrict" }),
+  phoneNumberId: uuid("phone_number_id")
+    .notNull()
+    .references(() => phoneNumbers.id, { onDelete: "restrict" }),
+  status: campaignStatusEnum("status").notNull().default("draft"),
+  // A non-null claim prevents overlapping manual dispatches for a campaign.
+  activeContactId: uuid("active_contact_id"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  organizationIdx: index("campaigns_organization_id_idx").on(table.organizationId),
+}));
+
+export const campaignContacts = pgTable("campaign_contacts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  campaignId: uuid("campaign_id")
+    .notNull()
+    .references(() => campaigns.id, { onDelete: "cascade" }),
+  phoneNumber: text("phone_number").notNull(),
+  consentConfirmedAt: timestamp("consent_confirmed_at", { withTimezone: true })
+    .notNull(),
+  consentConfirmedByUserId: uuid("consent_confirmed_by_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  status: campaignContactStatusEnum("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  campaignPhoneUnique: uniqueIndex("campaign_contacts_campaign_phone_unique").on(
+    table.campaignId,
+    table.phoneNumber,
+  ),
+  campaignStatusIdx: index("campaign_contacts_campaign_status_idx").on(
+    table.campaignId,
+    table.status,
+  ),
+}));
+
 /**
  * One row per phone call. Created the moment an inbound Twilio call is
  * matched to a phone number + agent (see app/api/voice/twilio/inbound);
@@ -271,7 +337,9 @@ export const calls = pgTable("calls", {
   phoneNumberId: uuid("phone_number_id")
     .notNull()
     .references(() => phoneNumbers.id, { onDelete: "cascade" }),
-  twilioCallSid: text("twilio_call_sid").notNull(),
+  campaignContactId: uuid("campaign_contact_id")
+    .references(() => campaignContacts.id, { onDelete: "set null" }),
+  twilioCallSid: text("twilio_call_sid"),
   vapiCallId: text("vapi_call_id"),
   fromNumber: text("from_number").notNull(),
   toNumber: text("to_number").notNull(),
@@ -468,6 +536,7 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   agents: many(agents),
   googleCalendarIntegration: one(googleCalendarIntegrations),
   hubspotIntegration: one(hubspotIntegrations),
+  campaigns: many(campaigns),
 }));
 
 export const googleCalendarIntegrationsRelations = relations(
@@ -512,6 +581,7 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
   }),
   phoneNumbers: many(phoneNumbers),
   calls: many(calls),
+  campaigns: many(campaigns),
 }));
 
 export const phoneNumbersRelations = relations(phoneNumbers, ({ one, many }) => ({
@@ -524,6 +594,7 @@ export const phoneNumbersRelations = relations(phoneNumbers, ({ one, many }) => 
     references: [agents.id],
   }),
   calls: many(calls),
+  campaigns: many(campaigns),
 }));
 
 export const callsRelations = relations(calls, ({ one, many }) => ({
@@ -540,6 +611,38 @@ export const callsRelations = relations(calls, ({ one, many }) => ({
     references: [phoneNumbers.id],
   }),
   transcripts: many(callTranscripts),
+  campaignContact: one(campaignContacts, {
+    fields: [calls.campaignContactId],
+    references: [campaignContacts.id],
+  }),
+}));
+
+export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [campaigns.organizationId],
+    references: [organizations.id],
+  }),
+  agent: one(agents, {
+    fields: [campaigns.agentId],
+    references: [agents.id],
+  }),
+  phoneNumber: one(phoneNumbers, {
+    fields: [campaigns.phoneNumberId],
+    references: [phoneNumbers.id],
+  }),
+  contacts: many(campaignContacts),
+}));
+
+export const campaignContactsRelations = relations(campaignContacts, ({ one, many }) => ({
+  campaign: one(campaigns, {
+    fields: [campaignContacts.campaignId],
+    references: [campaigns.id],
+  }),
+  consentConfirmedBy: one(users, {
+    fields: [campaignContacts.consentConfirmedByUserId],
+    references: [users.id],
+  }),
+  calls: many(calls),
 }));
 
 export const callTranscriptsRelations = relations(callTranscripts, ({ one }) => ({
@@ -621,6 +724,10 @@ export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type PhoneNumber = typeof phoneNumbers.$inferSelect;
 export type NewPhoneNumber = typeof phoneNumbers.$inferInsert;
+export type Campaign = typeof campaigns.$inferSelect;
+export type NewCampaign = typeof campaigns.$inferInsert;
+export type CampaignContact = typeof campaignContacts.$inferSelect;
+export type NewCampaignContact = typeof campaignContacts.$inferInsert;
 export type Call = typeof calls.$inferSelect;
 export type NewCall = typeof calls.$inferInsert;
 export type CallTranscript = typeof callTranscripts.$inferSelect;
@@ -640,6 +747,9 @@ export type AgentStatus = (typeof agentStatusEnum.enumValues)[number];
 export type PhoneNumberStatus = (typeof phoneNumberStatusEnum.enumValues)[number];
 export type CallStatus = (typeof callStatusEnum.enumValues)[number];
 export type CallOutcome = (typeof callOutcomeEnum.enumValues)[number];
+export type CampaignStatus = (typeof campaignStatusEnum.enumValues)[number];
+export type CampaignContactStatus =
+  (typeof campaignContactStatusEnum.enumValues)[number];
 export type TranscriptRole = (typeof transcriptRoleEnum.enumValues)[number];
 export type WebhookProvider = (typeof webhookProviderEnum.enumValues)[number];
 export type AppointmentStatus = (typeof appointmentStatusEnum.enumValues)[number];
