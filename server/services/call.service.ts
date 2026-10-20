@@ -1,4 +1,4 @@
-import { and, desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, isNull, max } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   agents,
@@ -192,6 +192,74 @@ export async function recordFailedCall(
 export async function findCallByVapiCallId(db: Database, vapiCallId: string): Promise<Call | null> {
   const [call] = await db.select().from(calls).where(eq(calls.vapiCallId, vapiCallId)).limit(1);
   return call ?? null;
+}
+
+export async function getRealtimeMediaStreamCall(
+  db: Database,
+  params: { callId: string; callSid: string },
+) {
+  const [row] = await db
+    .select({
+      call: calls,
+      agent: agents,
+    })
+    .from(calls)
+    .innerJoin(agents, eq(calls.agentId, agents.id))
+    .where(
+      and(
+        eq(calls.id, params.callId),
+        eq(calls.twilioCallSid, params.callSid),
+        eq(agents.voiceProvider, "openai_realtime"),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function markRealtimeMediaStreamCallStarted(
+  db: Database,
+  callId: string,
+): Promise<Call | null> {
+  const [call] = await db.select().from(calls).where(eq(calls.id, callId)).limit(1);
+  if (!call || call.status !== "ringing" || call.endedAt) return null;
+
+  const [updated] = await db
+    .update(calls)
+    .set({
+      status: "in_progress",
+      answeredAt: call.answeredAt ?? new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(calls.id, callId), eq(calls.status, "ringing"), isNull(calls.endedAt)))
+    .returning();
+  return updated ?? null;
+}
+
+export async function finishRealtimeMediaStreamCall(
+  db: Database,
+  params: { callId: string; status: "completed" | "failed"; reason: string; endedAt?: Date },
+): Promise<Call | null> {
+  const [call] = await db.select().from(calls).where(eq(calls.id, params.callId)).limit(1);
+  if (!call || call.endedAt) return call ?? null;
+
+  const endedAt = params.endedAt ?? new Date();
+  const durationStart = call.answeredAt ?? call.startedAt;
+  const durationSeconds = Math.max(
+    0,
+    Math.floor((endedAt.getTime() - durationStart.getTime()) / 1000),
+  );
+  const [updated] = await db
+    .update(calls)
+    .set({
+      status: params.status,
+      endedReason: params.reason,
+      endedAt,
+      durationSeconds,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(calls.id, params.callId), isNull(calls.endedAt)))
+    .returning();
+  return updated ?? null;
 }
 
 /** Convenience wrapper for the webhook route: append a transcript line by Vapi call id rather than our internal call id. */

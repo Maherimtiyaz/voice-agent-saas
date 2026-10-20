@@ -85,6 +85,7 @@ export async function updateAgentConfigAction(
   const validated = updateAgentConfigSchema.safeParse({
     systemPrompt: formData.get("systemPrompt"),
     transferNumber: formData.get("transferNumber"),
+    voiceProvider: formData.get("voiceProvider"),
   });
   if (!validated.success) {
     return { errors: validated.error.flatten().fieldErrors as Record<string, string[]> };
@@ -99,6 +100,7 @@ export async function updateAgentConfigAction(
       agentId,
       systemPrompt: validated.data.systemPrompt,
       transferNumber: validated.data.transferNumber,
+      voiceProvider: validated.data.voiceProvider,
     });
   } catch (error) {
     if (error instanceof AppError) {
@@ -141,6 +143,9 @@ export async function syncAgentWithVapiAction(
 
   try {
     const agent = await getAgent(db, { organizationId, userId: user.id, agentId });
+    if (agent.voiceProvider !== "vapi") {
+      return { message: "Vapi sync is disabled while this agent uses OpenAI Realtime." };
+    }
     let files = await listAgentKnowledgeFiles(db, {
       organizationId,
       userId: user.id,

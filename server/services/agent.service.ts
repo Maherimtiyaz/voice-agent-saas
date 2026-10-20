@@ -220,6 +220,7 @@ export async function updateAgentConfig(
     agentId: string;
     systemPrompt?: string;
     transferNumber?: string;
+    voiceProvider: Agent["voiceProvider"];
   },
 ): Promise<Agent> {
   // getAgent already enforces membership + org ownership of this agent id.
@@ -230,6 +231,7 @@ export async function updateAgentConfig(
     .set({
       systemPrompt: params.systemPrompt ?? null,
       transferNumber: params.transferNumber ?? null,
+      voiceProvider: params.voiceProvider,
       updatedAt: new Date(),
     })
     .where(eq(agents.id, params.agentId))

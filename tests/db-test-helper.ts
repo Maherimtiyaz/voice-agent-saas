@@ -13,6 +13,7 @@ import * as schema from "@/db/schema";
 const SCHEMA_SQL = `
   create type member_role as enum ('owner', 'admin', 'member');
   create type agent_status as enum ('draft', 'active', 'disabled');
+  create type voice_provider as enum ('vapi', 'openai_realtime');
   create type phone_number_status as enum ('active', 'inactive');
   create type call_status as enum ('ringing', 'in_progress', 'completed', 'failed', 'no_answer', 'voicemail');
   create type transcript_role as enum ('user', 'assistant', 'system');
@@ -98,6 +99,7 @@ const SCHEMA_SQL = `
     voice_config jsonb,
     language text not null default 'en',
     status agent_status not null default 'draft',
+    voice_provider voice_provider not null default 'vapi',
     vapi_assistant_id text,
     vapi_knowledge_tool_id text,
     transfer_number text,

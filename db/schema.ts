@@ -39,6 +39,11 @@ export const agentStatusEnum = pgEnum("agent_status", [
   "disabled",
 ]);
 
+export const voiceProviderEnum = pgEnum("voice_provider", [
+  "vapi",
+  "openai_realtime",
+]);
+
 export const phoneNumberStatusEnum = pgEnum("phone_number_status", [
   "active",
   "inactive",
@@ -236,6 +241,7 @@ export const agents = pgTable("agents", {
   voiceConfig: jsonb("voice_config").$type<Record<string, unknown>>(),
   language: text("language").notNull().default("en"),
   status: agentStatusEnum("status").notNull().default("draft"),
+  voiceProvider: voiceProviderEnum("voice_provider").notNull().default("vapi"),
   // Set once the agent has been synced to Vapi as an assistant (Phase 1).
   // Null until then — sync is an explicit, manually-triggered action, not
   // automatic on every create/update (see server/integrations/vapi).

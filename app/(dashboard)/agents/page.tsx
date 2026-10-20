@@ -71,9 +71,11 @@ export default async function AgentsPage() {
                   <p className="text-sm font-medium text-foreground">{agent.name}</p>
                   <p className="font-mono text-xs text-muted">{agent.id}</p>
                   <p className="mt-1 text-xs text-muted">
-                    {agent.vapiAssistantId
-                      ? `Synced — Vapi assistant ${agent.vapiAssistantId}`
-                      : "Not synced to Vapi yet"}
+                    {agent.voiceProvider === "openai_realtime"
+                      ? "Custom voice — Twilio Media Streams + OpenAI Realtime"
+                      : agent.vapiAssistantId
+                        ? `Synced — Vapi assistant ${agent.vapiAssistantId}`
+                        : "Not synced to Vapi yet"}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -84,18 +86,29 @@ export default async function AgentsPage() {
                   >
                     {agent.status}
                   </span>
-                  <SyncAgentButton agentId={agent.id} hasSynced={Boolean(agent.vapiAssistantId)} />
+                  {agent.voiceProvider === "vapi" ? (
+                    <SyncAgentButton agentId={agent.id} hasSynced={Boolean(agent.vapiAssistantId)} />
+                  ) : (
+                    <span className="text-xs text-muted">Uses OpenAI Realtime directly</span>
+                  )}
                 </div>
               </div>
               <AgentConfigForm
                 agentId={agent.id}
                 systemPrompt={agent.systemPrompt}
                 transferNumber={agent.transferNumber}
+                voiceProvider={agent.voiceProvider}
               />
-              <AgentKnowledgeBase
-                agentId={agent.id}
-                files={knowledgeFiles.get(agent.id) ?? []}
-              />
+              {agent.voiceProvider === "vapi" ? (
+                <AgentKnowledgeBase
+                  agentId={agent.id}
+                  files={knowledgeFiles.get(agent.id) ?? []}
+                />
+              ) : (
+                <p className="border-t border-border pt-3 text-xs text-muted">
+                  Vapi knowledge documents are not used by OpenAI Realtime agents.
+                </p>
+              )}
             </div>
           ))}
         </div>

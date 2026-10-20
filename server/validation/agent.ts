@@ -25,6 +25,7 @@ export const updateAgentConfigSchema = z.object({
     .regex(E164_REGEX, "Enter the transfer number in E.164 format, e.g. +14155551234.")
     .optional()
     .or(z.literal("").transform(() => undefined)),
+  voiceProvider: z.enum(["vapi", "openai_realtime"]),
 });
 
 export type UpdateAgentConfigInput = z.infer<typeof updateAgentConfigSchema>;

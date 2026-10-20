@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDatabase, type TestDatabase } from "../db-test-helper";
 import { agents, organizationMembers, organizations, phoneNumbers, users } from "@/db/schema";
 import {
   appendTranscript,
   applyEndOfCallReport,
   applyStatusUpdate,
+  finishRealtimeMediaStreamCall,
+  getRealtimeMediaStreamCall,
   getCallDetail,
   listCalls,
+  markRealtimeMediaStreamCallStarted,
   recordFailedCall,
   recordWebhookEventIfNew,
   startCall,
@@ -48,6 +52,47 @@ beforeEach(async () => {
 });
 
 describe("call lifecycle", () => {
+  it("authenticates and tracks a custom realtime media-stream call", async () => {
+    const { org, agent, phoneNumber } = await seedOrgWithAgentAndNumber();
+    await db
+      .update(agents)
+      .set({ voiceProvider: "openai_realtime" })
+      .where(eq(agents.id, agent.id));
+    const call = await startCall(db, {
+      organizationId: org.id,
+      agentId: agent.id,
+      phoneNumberId: phoneNumber.id,
+      twilioCallSid: "CA-realtime",
+      vapiCallId: null,
+      fromNumber: "+15005550006",
+      toNumber: phoneNumber.e164Number,
+    });
+
+    expect(await getRealtimeMediaStreamCall(db, {
+      callId: call.id,
+      callSid: "CA-not-this-call",
+    })).toBeNull();
+    expect(await getRealtimeMediaStreamCall(db, {
+      callId: call.id,
+      callSid: "CA-realtime",
+    })).not.toBeNull();
+    expect((await markRealtimeMediaStreamCallStarted(db, call.id))?.status).toBe("in_progress");
+
+    const startedCall = await markRealtimeMediaStreamCallStarted(db, call.id);
+    expect(startedCall).toBeNull();
+
+    const endedAt = new Date(Date.now() + 10_000);
+    const finished = await finishRealtimeMediaStreamCall(db, {
+      callId: call.id,
+      status: "completed",
+      reason: "twilio_media_stream_ended",
+      endedAt,
+    });
+    expect(finished?.status).toBe("completed");
+    expect(finished?.durationSeconds).toBeGreaterThanOrEqual(10);
+    expect(finished?.endedReason).toBe("twilio_media_stream_ended");
+  });
+
   it("creates a call in the ringing state", async () => {
     const { org, agent, phoneNumber } = await seedOrgWithAgentAndNumber();
 

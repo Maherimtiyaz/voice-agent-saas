@@ -70,6 +70,26 @@ beforeEach(async () => {
 });
 
 describe("campaign service", () => {
+  it("rejects OpenAI Realtime agents because outbound campaigns still use Vapi", async () => {
+    const { organization, user, agent, phoneNumber } = await seedWorkspace();
+    await db
+      .update(agents)
+      .set({ voiceProvider: "openai_realtime" })
+      .where(eq(agents.id, agent.id));
+
+    await expect(
+      createCampaign(db, {
+        organizationId: organization.id,
+        userId: user.id,
+        input: {
+          name: "Realtime campaign",
+          agentId: agent.id,
+          phoneNumberId: phoneNumber.id,
+        },
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
   it("creates tenant-scoped campaigns and lists contact counts", async () => {
     const { organization, user, agent, phoneNumber } = await seedWorkspace();
     const campaign = await createCampaign(db, {

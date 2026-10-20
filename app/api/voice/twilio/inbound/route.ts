@@ -2,10 +2,19 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { db } from "@/db";
 import { getTwilioWebhookUrl, verifyTwilioSignature } from "@/server/integrations/twilio/verify";
-import { sayAndHangupTwiml } from "@/server/integrations/twilio/twiml";
+import {
+  connectMediaStreamTwiml,
+  sayAndHangupTwiml,
+} from "@/server/integrations/twilio/twiml";
+import { createMediaStreamToken } from "@/server/integrations/twilio/media-stream-auth";
 import { createBypassCall } from "@/server/integrations/vapi/call";
 import { resolvePhoneNumberForInboundCall } from "@/server/services/phone-number.service";
-import { recordFailedCall, recordWebhookEventIfNew, startCall } from "@/server/services/call.service";
+import {
+  finishRealtimeMediaStreamCall,
+  recordFailedCall,
+  recordWebhookEventIfNew,
+  startCall,
+} from "@/server/services/call.service";
 
 const WEBHOOK_PATH = "/api/voice/twilio/inbound";
 
@@ -98,6 +107,51 @@ export async function POST(request: NextRequest) {
   }
 
   const { phoneNumber, agent } = resolved;
+
+  if (agent.voiceProvider === "openai_realtime") {
+    let callId: string | undefined;
+    try {
+      const call = await startCall(db, {
+        organizationId: phoneNumber.organizationId,
+        agentId: agent.id,
+        phoneNumberId: phoneNumber.id,
+        twilioCallSid: callSid,
+        vapiCallId: null,
+        fromNumber: from,
+        toNumber: to,
+      });
+      callId = call.id;
+
+      const streamUrl = process.env.MEDIA_STREAMS_URL;
+      if (!streamUrl) {
+        throw new Error("MEDIA_STREAMS_URL is not configured.");
+      }
+      const authToken = createMediaStreamToken({ callId: call.id, callSid });
+      return twimlResponse(connectMediaStreamTwiml({ streamUrl, authToken }));
+    } catch (error) {
+      console.error(`[voice/twilio] Media Streams setup failed for ${callSid}`, error);
+      if (callId) {
+        await finishRealtimeMediaStreamCall(db, {
+          callId,
+          status: "failed",
+          reason: "media_stream_setup_failed",
+        });
+      } else {
+        await recordFailedCall(db, {
+          organizationId: phoneNumber.organizationId,
+          agentId: agent.id,
+          phoneNumberId: phoneNumber.id,
+          twilioCallSid: callSid,
+          fromNumber: from,
+          toNumber: to,
+          reason: "media_stream_setup_failed",
+        });
+      }
+      return twimlResponse(
+        sayAndHangupTwiml("Sorry, we couldn't connect your call right now. Goodbye."),
+      );
+    }
+  }
 
   if (!agent.vapiAssistantId) {
     await recordFailedCall(db, {

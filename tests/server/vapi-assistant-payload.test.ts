@@ -12,6 +12,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     voiceConfig: null,
     language: "en",
     status: "draft",
+    voiceProvider: "vapi",
     vapiAssistantId: null,
     vapiKnowledgeToolId: null,
     transferNumber: null,

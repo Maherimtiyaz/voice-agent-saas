@@ -123,7 +123,7 @@ export async function createCampaign(
 
   const [[agent], [phoneNumber]] = await Promise.all([
     db
-      .select({ id: agents.id })
+      .select({ id: agents.id, voiceProvider: agents.voiceProvider })
       .from(agents)
       .where(
         and(
@@ -145,6 +145,9 @@ export async function createCampaign(
   ]);
 
   if (!agent) throw new NotFoundError("Agent");
+  if (agent.voiceProvider !== "vapi") {
+    throw new ConflictError("Outbound campaigns currently require a Vapi voice agent.");
+  }
   if (!phoneNumber) throw new NotFoundError("Phone number");
 
   const [campaign] = await db
@@ -255,7 +258,7 @@ export async function reserveNextCampaignContact(
         .limit(1),
     ]);
     const assistantId = agent?.vapiAssistantId;
-    if (!agent || !assistantId) {
+    if (!agent || agent.voiceProvider !== "vapi" || !assistantId) {
       throw new ConflictError("Sync the campaign's agent to Vapi before starting.");
     }
     const vapiPhoneNumberId = phoneNumber?.vapiPhoneNumberId;

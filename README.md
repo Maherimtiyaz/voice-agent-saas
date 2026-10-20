@@ -5,7 +5,8 @@ answer inbound calls, understand intent, call backend tools, and complete
 workflows like booking appointments or creating CRM records.
 
 **Current state: Phase 0 (auth, organizations/workspaces, dashboard shell)
-plus Phase 1 (real inbound calling — Twilio + Vapi, call history,
+plus Phase 1 (real inbound calling — Twilio + Vapi or opt-in Twilio Media
+Streams + OpenAI Realtime, call history,
 transcripts), Google Calendar integration for real availability and
 appointment creation, HubSpot CRM synchronization for contacts and
 deals, and a first outbound-campaign MVP. Campaigns support consent-attested
@@ -23,6 +24,9 @@ available with workspace API keys — see "Public API" below.
   httpOnly cookie
 - Twilio (inbound call webhook, signature-verified) + Vapi (voice runtime,
   via the documented "phone-call-bypass" pattern)
+- Optional custom inbound voice runtime using bidirectional Twilio Media
+  Streams and OpenAI Realtime over a separately hosted persistent WebSocket
+  service
 - Google Calendar and HubSpot OAuth integrations with encrypted refresh
   tokens and provider API clients
 - Vitest, with real service-layer tests run against an in-memory Postgres
@@ -69,6 +73,8 @@ server/
                                            HubSpot contacts and deals
     twilio/verify.ts, twiml.ts,        — signature verification, TwiML
       sms.ts, transfer.ts                helpers, SMS send, live-call transfer
+    media-streams/server.ts             — standalone persistent WebSocket server
+    media-streams/realtime-session.ts   — Twilio/OpenAI audio and tool bridge
     vapi/client.ts, assistant.ts,      — REST client, assistant and
       knowledge-base.ts                  knowledge tool sync,
       call.ts, verify.ts,                phone-call-bypass, webhook secret
@@ -110,19 +116,17 @@ Customer dials a Twilio number
                                                        up OUR phone_numbers
                                                        table by the dialed
                                                        number, nothing else
-      -> phone_numbers row -> agents row (agent.vapiAssistantId)
-        -> createBypassCall(): POST https://api.vapi.ai/call with
-           phoneCallProviderBypassEnabled: true, assistantId, customer.number
-          -> Vapi returns TwiML; we return that TwiML to Twilio as-is
-            -> Twilio bridges the call to Vapi directly (we're no longer
-               in the audio path)
-              -> Vapi runs the conversation using the agent's system
-                 prompt/voice/language
-                -> Vapi POSTs status-update / transcript / end-of-call-report
-                   messages to /api/voice/vapi/events (shared-secret verified)
-                  -> call.service.ts updates the `calls` row and appends
-                     `call_transcripts` rows
-                    -> visible in the dashboard: /calls, /calls/[id]
+      -> phone_numbers row -> agents row (voiceProvider)
+        -> Vapi (default):
+           createBypassCall() -> TwiML bridges Twilio directly to Vapi
+           -> Vapi webhooks update the call and transcript rows
+        -> OpenAI Realtime (per-agent opt-in):
+           create a call row and short-lived signed stream token
+           -> TwiML opens a bidirectional Twilio Media Stream
+           -> standalone Node WebSocket service validates the token and
+              call identity, then bridges 8 kHz μ-law audio to OpenAI Realtime
+           -> the existing tenant-scoped tool executor handles function calls
+           -> call status and transcripts are stored in the same call history
 ```
 
 We deliberately do NOT import the Twilio number into Vapi and let Vapi own
@@ -133,18 +137,30 @@ config — be the single source of truth for which agent handles which
 number, which is what "the system must never select an arbitrary agent"
 requires in a multi-tenant product.
 
+Custom realtime calls use a separate persistent Node WebSocket process:
+Next.js Route Handlers serve HTTP requests and cannot own the long-lived
+Media Streams connection. The inbound webhook remains the tenant trust
+boundary; it mints a five-minute HMAC token bound to the internal call id
+and Twilio Call SID. The stream service checks that token against the call
+row before connecting to OpenAI. Audio is passed as G.711 μ-law/8 kHz, and
+the existing fixed server-side tools are exposed to OpenAI function calling
+and executed through `server/tools/executor.ts`. This initial custom path is
+for inbound calls; outbound campaigns and Vapi knowledge-base retrieval
+continue to use Vapi.
+
 ### Agent tool framework
 
 During a live call, the LLM can invoke a fixed set of server-side tools —
 `get_customer`, `create_customer`, `check_availability`, `book_appointment`,
 `create_job`, `send_sms`, `transfer_call` — via Vapi's `tool-calls` server
-message. The framework this runs on (`server/tools/`) is deliberately small:
+message or OpenAI Realtime function calling. The framework this runs on
+(`server/tools/`) is deliberately small:
 
 ```
-Vapi tool-calls webhook (message.toolCallList)
-  -> the call's vapiCallId resolves to OUR calls row (organizationId, agentId)
-     — this is the ONLY source of tenant identity; nothing from the tool
-       call payload itself is ever trusted for that
+Provider tool call
+  -> Vapi: vapiCallId resolves to OUR calls row
+     OpenAI: signed stream token and Twilio Call SID resolve to OUR calls row
+     — provider arguments are never trusted for tenant identity
   -> executeTool(): look up the tool by name
        -> validate rawInput against that tool's zod schema
           (an unknown tool or a schema violation never reaches a handler)
@@ -153,7 +169,7 @@ Vapi tool-calls webhook (message.toolCallList)
           — every execution, success or failure
        -> catch any thrown error and return a generic message; the LLM
           and the webhook response never see a raw exception or stack trace
-  -> results returned to Vapi as { results: [{ toolCallId, result }] }
+  -> results returned to the calling provider in its function-call format
 ```
 
 This is what "the LLM must never receive unrestricted database access"
@@ -233,7 +249,7 @@ anywhere.
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
 | `api_keys`           | Workspace-scoped public API credentials; stores only a SHA-256 hash.   | unique key hash; revocation timestamp; organization cascade delete |
-| `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, status, Vapi assistant id, and optional knowledge query-tool id. | `organization_id` cascade delete; `status` enum |
+| `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, voice provider, status, Vapi assistant id, and optional knowledge query-tool id. | `organization_id` cascade delete; `voice_provider` and `status` enums |
 | `agent_knowledge_files` | Per-agent document metadata and Vapi file id/status; file contents remain in Vapi. | organization/agent cascade delete; unique Vapi file id; processing-status enum |
 | `phone_numbers`      | A Twilio number the org owns, optionally assigned to an agent. `vapi_phone_number_id` is filled in once the number has been imported into Vapi (required by the phone-call-bypass API — see "Manual setup"). | `twilio_number_sid` unique; `e164_number` unique; `agent_id` nullable, `ON DELETE SET NULL` |
 | `calls`              | One row per inbound or outbound phone call. `status` is call-lifecycle state; `outcome` is a separate, nullable business-outcome summary (e.g. `appointment_booked`) set by the tool executor — never conflated with `status`. | nullable `twilio_call_sid` unique; `vapi_call_id` unique; `agent_id`/`phone_number_id` NOT NULL, cascade delete |
@@ -267,6 +283,10 @@ cp .env.example .env
 | `TWILIO_AUTH_TOKEN`    | voice              | Twilio Console -> Account. Used only to verify `X-Twilio-Signature` |
 | `VAPI_PRIVATE_API_KEY` | voice              | Vapi dashboard -> API Keys |
 | `VAPI_WEBHOOK_SECRET`  | voice              | A secret you choose — see step 5 below |
+| `OPENAI_API_KEY` | custom voice | OpenAI API key; required by the Media Streams service |
+| `MEDIA_STREAMS_URL` | custom voice | Public `wss://` URL ending in `/media-streams`; route it to the standalone service |
+| `MEDIA_STREAMS_SECRET` | custom voice | At least 32 characters; shared by Next.js and the Media Streams service |
+| `OPENAI_REALTIME_MODEL` | custom voice | Optional; defaults to `gpt-realtime-2.1` |
 | `GOOGLE_CLIENT_ID`     | calendar           | Google Cloud OAuth 2.0 Web application client |
 | `GOOGLE_CLIENT_SECRET` | calendar           | Google Cloud OAuth 2.0 Web application secret |
 | `CALENDAR_TOKEN_ENCRYPTION_KEY` | calendar   | Base64-encoded 32-byte AES-256-GCM key for refresh tokens |
@@ -330,6 +350,43 @@ automated account setup. You need to do the following yourself:
    `/phone-numbers`, register the number from step 1 with the Vapi phone
    number ID from step 3, and assign it to the agent.
 6. Call the number.
+
+### Custom voice with Twilio Media Streams (optional)
+
+Custom orchestration is selected per agent under **Agents → Voice
+orchestration**. It currently supports inbound calls only. The Twilio number
+must still send its Voice webhook to
+`${APP_URL}/api/voice/twilio/inbound`; unlike Vapi agents, it does not need a
+Vapi assistant or imported Vapi phone-number id. Apply the schema update
+with `npm run db:push` before enabling this mode.
+
+Set `OPENAI_API_KEY`, `MEDIA_STREAMS_URL`, and `MEDIA_STREAMS_SECRET` in both
+the Next.js and Media Streams service environments. `MEDIA_STREAMS_URL`
+must be the externally reachable secure WebSocket URL
+`wss://<host>/media-streams`. Terminate TLS at the hosting platform or a
+reverse proxy and forward WebSocket upgrades to the service's
+`MEDIA_STREAMS_PORT` (default `8787`). Keep the service on a persistent
+Node.js host; serverless hosting cannot keep the stream connection alive.
+
+For local development, run both processes in separate terminals:
+
+```bash
+npm run dev
+npm run dev:media-streams
+```
+
+For deployment, build the standalone service and run it as a second process:
+
+```bash
+npm run build:media-streams
+npm run start:media-streams
+```
+
+The service exposes `GET /healthz` for readiness checks. It uses OpenAI's
+Realtime model with the `marin` voice and PCMU audio end-to-end. It persists
+final user/assistant transcripts and call status, and routes function calls
+through the same validated and logged tool executor as Vapi. Vapi document
+retrieval and outbound campaigns are not yet available in this mode.
 
 ### Agent knowledge bases
 
@@ -448,7 +505,6 @@ npm run build
 - Scheduled campaigns, automated pacing/retries, durable campaign queues,
   Redis, BullMQ
 - Billing, public API write operations, API rate limiting and webhooks
-- Custom STT/TTS/voice orchestration, Twilio Media Streams
 - Human handoff beyond the single fixed `transfer_call` destination,
   sentiment analysis
 - Automated Twilio/Vapi provisioning (buying numbers, importing them,

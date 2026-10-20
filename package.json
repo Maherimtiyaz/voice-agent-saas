@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:media-streams": "esbuild server/media-streams/server.ts --bundle --platform=node --format=cjs --conditions=react-server --target=node20 --outfile=dist/media-streams/server.cjs",
     "start": "next start",
+    "start:media-streams": "node dist/media-streams/server.cjs",
+    "dev:media-streams": "node --conditions=react-server --import tsx server/media-streams/server.ts",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
@@ -25,7 +28,9 @@
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
-    "twilio": "^6.1.1"
+    "twilio": "^6.1.1",
+    "ws": "^8.22.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -34,9 +39,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
