@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "../db-test-helper";
-import { agents, calls, organizations, phoneNumbers, toolExecutions } from "@/db/schema";
+import { agents, calls, callHandoffs, organizations, phoneNumbers, toolExecutions } from "@/db/schema";
 import { executeTool } from "@/server/tools/executor";
 import { ensureToolsRegistered } from "@/server/tools/definitions";
 import { eq } from "drizzle-orm";
@@ -42,6 +42,13 @@ async function seedOrgAgentAndCall(transferNumber?: string) {
 beforeEach(async () => {
   db = await createTestDatabase();
   ensureToolsRegistered();
+  vi.stubEnv("OPENAI_API_KEY", "");
+  vi.stubEnv("TWILIO_ACCOUNT_SID", "");
+  vi.stubEnv("TWILIO_AUTH_TOKEN", "");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("transfer_call", () => {
@@ -74,6 +81,9 @@ describe("transfer_call", () => {
     // reports success with the injected destination; the absence of
     // TWILIO_ACCOUNT_SID/AUTH_TOKEN in this test env makes that certain.
     expect(result.success).toBe(false);
+    const [handoff] = await db.select().from(callHandoffs).where(eq(callHandoffs.callId, call.id));
+    expect(handoff.destinationNumber).toBe("+14155550199");
+    expect(handoff.status).toBe("failed");
   });
 
   it("logs the attempt even when it fails", async () => {

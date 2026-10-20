@@ -22,6 +22,7 @@ const SCHEMA_SQL = `
   create type job_status as enum ('open', 'in_progress', 'completed', 'cancelled');
   create type tool_execution_status as enum ('success', 'failure');
   create type call_outcome as enum ('appointment_booked', 'job_created', 'transferred_to_human', 'sms_sent');
+  create type call_handoff_status as enum ('initiated', 'connected', 'completed', 'no_answer', 'failed');
   create type campaign_status as enum ('draft', 'active', 'paused', 'completed');
   create type campaign_contact_status as enum ('pending', 'calling', 'completed', 'failed', 'no_answer');
   create type knowledge_file_status as enum ('processing', 'done', 'failed');
@@ -75,6 +76,28 @@ const SCHEMA_SQL = `
   );
   create unique index organization_members_org_user_unique
     on organization_members (organization_id, user_id);
+
+  create table organization_invites (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    invited_by_user_id uuid references users (id) on delete set null,
+    email text not null,
+    role member_role not null default 'member',
+    token_hash text not null,
+    expires_at timestamptz not null,
+    accepted_at timestamptz,
+    revoked_at timestamptz,
+    created_at timestamptz not null default now()
+  );
+  create unique index organization_invites_token_hash_unique
+    on organization_invites (token_hash);
+  create unique index organization_invites_pending_email_unique
+    on organization_invites (organization_id, email)
+    where accepted_at is null and revoked_at is null;
+  create index organization_invites_organization_email_idx
+    on organization_invites (organization_id, email);
+  create index organization_invites_organization_created_idx
+    on organization_invites (organization_id, created_at);
 
   create table api_keys (
     id uuid primary key default gen_random_uuid(),
@@ -200,6 +223,22 @@ const SCHEMA_SQL = `
   );
   create unique index call_transcripts_call_sequence_unique
     on call_transcripts (call_id, sequence_number);
+
+  create table call_handoffs (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    call_id uuid not null references calls (id) on delete cascade,
+    destination_number text not null,
+    reason text,
+    summary text not null,
+    status call_handoff_status not null default 'initiated',
+    created_at timestamptz not null default now(),
+    answered_at timestamptz,
+    ended_at timestamptz
+  );
+  create index call_handoffs_organization_created_idx
+    on call_handoffs (organization_id, created_at);
+  create index call_handoffs_call_id_idx on call_handoffs (call_id);
 
   create table webhook_events (
     id uuid primary key default gen_random_uuid(),

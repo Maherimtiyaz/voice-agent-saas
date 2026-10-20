@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, max } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   agents,
+  callHandoffs,
   callTranscripts,
   calls,
   phoneNumbers,
@@ -527,6 +528,7 @@ export async function listCalls(
 
 export interface CallDetail extends CallWithDetails {
   transcripts: CallTranscript[];
+  handoffs: typeof callHandoffs.$inferSelect[];
 }
 
 export async function getCallDetail(
@@ -577,5 +579,16 @@ export async function getCallDetail(
     .where(eq(callTranscripts.callId, call.id))
     .orderBy(callTranscripts.sequenceNumber);
 
-  return { ...call, transcripts };
+  const handoffs = await db
+    .select()
+    .from(callHandoffs)
+    .where(
+      and(
+        eq(callHandoffs.callId, call.id),
+        eq(callHandoffs.organizationId, params.organizationId),
+      ),
+    )
+    .orderBy(desc(callHandoffs.createdAt));
+
+  return { ...call, transcripts, handoffs };
 }

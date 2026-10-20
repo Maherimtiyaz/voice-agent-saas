@@ -7,6 +7,17 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
+export function handoffWhisperTwiml(summary: string, callerNumber: string): string {
+  const briefing = `Incoming call from ${callerNumber}. ${summary}`;
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(briefing)}</Say></Response>`;
+}
+
+export function handoffFailedTwiml(): string {
+  return sayAndHangupTwiml(
+    "We couldn't connect you to a team member right now. Please try again later.",
+  );
+}
+
 /**
  * Only used for our OWN fallback cases (number not configured, upstream
  * error) — the "happy path" TwiML that actually bridges to Vapi comes

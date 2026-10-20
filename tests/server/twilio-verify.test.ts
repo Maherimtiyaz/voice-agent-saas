@@ -18,6 +18,23 @@ describe("Twilio webhook signature verification", () => {
     expect(verifyTwilioSignature({ signatureHeader: signature, url, params })).toBe(true);
   });
 
+  it("accepts handoff callback URLs signed with their opaque query id", async () => {
+    const { verifyTwilioSignature, getTwilioWebhookUrl } = await import(
+      "@/server/integrations/twilio/verify"
+    );
+    const url = getTwilioWebhookUrl(
+      "/api/voice/twilio/handoff/whisper?handoffId=1df9d590-4428-4b48-b64d-1ae59b2175aa",
+    );
+    const params = {
+      CallSid: "CA-child",
+      ParentCallSid: "CA-parent",
+      From: "+14155550100",
+    };
+    const signature = webhooks.getExpectedTwilioSignature("test-auth-token", url, params);
+
+    expect(verifyTwilioSignature({ signatureHeader: signature, url, params })).toBe(true);
+  });
+
   it("rejects a tampered payload (params changed after signing)", async () => {
     const { verifyTwilioSignature, getTwilioWebhookUrl } = await import(
       "@/server/integrations/twilio/verify"

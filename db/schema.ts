@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -104,6 +104,14 @@ export const callOutcomeEnum = pgEnum("call_outcome", [
   "sms_sent",
 ]);
 
+export const callHandoffStatusEnum = pgEnum("call_handoff_status", [
+  "initiated",
+  "connected",
+  "completed",
+  "no_answer",
+  "failed",
+]);
+
 export const campaignStatusEnum = pgEnum("campaign_status", [
   "draft",
   "active",
@@ -205,6 +213,38 @@ export const organizationMembers = pgTable("organization_members", {
   orgUserUnique: uniqueIndex("organization_members_org_user_unique").on(
     table.organizationId,
     table.userId,
+  ),
+}));
+
+export const organizationInvites = pgTable("organization_invites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  invitedByUserId: uuid("invited_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  email: text("email").notNull(),
+  role: memberRoleEnum("role").notNull().default("member"),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex("organization_invites_token_hash_unique").on(table.tokenHash),
+  pendingEmailUnique: uniqueIndex("organization_invites_pending_email_unique")
+    .on(table.organizationId, table.email)
+    .where(sql`${table.acceptedAt} is null and ${table.revokedAt} is null`),
+  organizationEmailIdx: index("organization_invites_organization_email_idx").on(
+    table.organizationId,
+    table.email,
+  ),
+  organizationCreatedIdx: index("organization_invites_organization_created_idx").on(
+    table.organizationId,
+    table.createdAt,
   ),
 }));
 
@@ -451,6 +491,31 @@ export const callTranscripts = pgTable("call_transcripts", {
   ),
 }));
 
+export const callHandoffs = pgTable("call_handoffs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  callId: uuid("call_id")
+    .notNull()
+    .references(() => calls.id, { onDelete: "cascade" }),
+  destinationNumber: text("destination_number").notNull(),
+  reason: text("reason"),
+  summary: text("summary").notNull(),
+  status: callHandoffStatusEnum("status").notNull().default("initiated"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  answeredAt: timestamp("answered_at", { withTimezone: true }),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+}, (table) => ({
+  orgCreatedIdx: index("call_handoffs_organization_created_idx").on(
+    table.organizationId,
+    table.createdAt,
+  ),
+  callIdx: index("call_handoffs_call_id_idx").on(table.callId),
+}));
+
 /**
  * Idempotency ledger for provider webhooks. `externalEventId` is not
  * something either provider hands us directly (neither Twilio's nor
@@ -593,6 +658,7 @@ export const toolExecutions = pgTable("tool_executions", {
 
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   members: many(organizationMembers),
+  invites: many(organizationInvites),
   apiKeys: many(apiKeys),
   agents: many(agents),
   googleCalendarIntegration: one(googleCalendarIntegrations),
@@ -619,6 +685,7 @@ export const hubspotIntegrationsRelations = relations(hubspotIntegrations, ({ on
 
 export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(organizationMembers),
+  sentOrganizationInvites: many(organizationInvites),
   createdApiKeys: many(apiKeys),
 }));
 
@@ -642,6 +709,20 @@ export const organizationMembersRelations = relations(
     }),
     user: one(users, {
       fields: [organizationMembers.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const organizationInvitesRelations = relations(
+  organizationInvites,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [organizationInvites.organizationId],
+      references: [organizations.id],
+    }),
+    invitedBy: one(users, {
+      fields: [organizationInvites.invitedByUserId],
       references: [users.id],
     }),
   }),
@@ -685,6 +766,7 @@ export const callsRelations = relations(calls, ({ one, many }) => ({
     references: [phoneNumbers.id],
   }),
   transcripts: many(callTranscripts),
+  handoffs: many(callHandoffs),
   campaignContact: one(campaignContacts, {
     fields: [calls.campaignContactId],
     references: [campaignContacts.id],
@@ -736,6 +818,17 @@ export const agentKnowledgeFilesRelations = relations(
 export const callTranscriptsRelations = relations(callTranscripts, ({ one }) => ({
   call: one(calls, {
     fields: [callTranscripts.callId],
+    references: [calls.id],
+  }),
+}));
+
+export const callHandoffsRelations = relations(callHandoffs, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [callHandoffs.organizationId],
+    references: [organizations.id],
+  }),
+  call: one(calls, {
+    fields: [callHandoffs.callId],
     references: [calls.id],
   }),
 }));
@@ -808,6 +901,8 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;
 export type NewOrganizationMember = typeof organizationMembers.$inferInsert;
+export type OrganizationInvite = typeof organizationInvites.$inferSelect;
+export type NewOrganizationInvite = typeof organizationInvites.$inferInsert;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
 export type Agent = typeof agents.$inferSelect;
@@ -824,6 +919,8 @@ export type Call = typeof calls.$inferSelect;
 export type NewCall = typeof calls.$inferInsert;
 export type CallTranscript = typeof callTranscripts.$inferSelect;
 export type NewCallTranscript = typeof callTranscripts.$inferInsert;
+export type CallHandoff = typeof callHandoffs.$inferSelect;
+export type NewCallHandoff = typeof callHandoffs.$inferInsert;
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
 export type NewWebhookEvent = typeof webhookEvents.$inferInsert;
 export type Customer = typeof customers.$inferSelect;
@@ -839,6 +936,7 @@ export type AgentStatus = (typeof agentStatusEnum.enumValues)[number];
 export type PhoneNumberStatus = (typeof phoneNumberStatusEnum.enumValues)[number];
 export type CallStatus = (typeof callStatusEnum.enumValues)[number];
 export type CallOutcome = (typeof callOutcomeEnum.enumValues)[number];
+export type CallHandoffStatus = (typeof callHandoffStatusEnum.enumValues)[number];
 export type CampaignStatus = (typeof campaignStatusEnum.enumValues)[number];
 export type CampaignContactStatus =
   (typeof campaignContactStatusEnum.enumValues)[number];

@@ -193,7 +193,13 @@ real external systems and are the most abuse-sensitive:
   `transferNumber` (set in the dashboard's Agents page, never a value
   the LLM/tool-call payload can supply) — its input schema literally has
   no destination field, so there's nothing for a rogue payload to
-  override even if it tried.
+  override even if it tried. Before bridging, the receiving human hears
+  an AI-generated briefing from the conversation transcript and caller's
+  transfer reason. Twilio callback signatures are verified; each handoff's
+  summary, configured destination, and lifecycle are retained on the
+  tenant-scoped call detail page. If the recipient does not answer, the
+  caller hears a clear fallback message. When OpenAI summary generation is
+  unavailable, the handoff continues with a labeled transcript excerpt.
 
 `check_availability` and `book_appointment` use the workspace's connected
 Google primary calendar for busy-time checks and event creation. The
@@ -235,9 +241,15 @@ authorization boundary is the service layer, on every request, every time.
 
 ### Organizations / workspaces
 
-Unchanged from Phase 0: `User` <-> `OrganizationMember` <-> `Organization`,
-many-to-many with a role per membership. No `users.organization_id`
-anywhere.
+`User` <-> `OrganizationMember` <-> `Organization` remains many-to-many
+with a role per membership. Owners and admins can create seven-day
+invitation links from Settings; links are bearer credentials, so send them
+only to the intended recipient. Only owners can grant admin access.
+Invitation tokens are stored as SHA-256 hashes, can be revoked or
+reissued, and are single-use. New invitees create an account with the
+invited email; existing users must sign in with that email. Invite links
+are displayed once for the workspace administrator to copy and send;
+there is no email-delivery provider configured.
 
 ## Database tables
 
@@ -248,6 +260,7 @@ anywhere.
 | `hubspot_integrations` | One encrypted HubSpot refresh token per organization.                 | unique `organization_id`; cascade delete |
 | `users`              | A global identity.                                                      | `email` unique |
 | `organization_members` | Join table: who belongs to which org, with what role.               | unique `(org_id, user_id)`; cascade delete; `role` enum |
+| `organization_invites` | Single-use, expiring workspace invite; token is stored as a hash.    | token and pending `(org_id, email)` unique; expires/accepted/revoked timestamps; organization cascade delete |
 | `api_keys`           | Workspace-scoped public API credentials; stores only a SHA-256 hash.   | unique key hash; revocation timestamp; organization cascade delete |
 | `agents`             | Voice agent config: name, description, system prompt, voice config (jsonb), language, voice provider, status, Vapi assistant id, and optional knowledge query-tool id. | `organization_id` cascade delete; `voice_provider` and `status` enums |
 | `agent_knowledge_files` | Per-agent document metadata and Vapi file id/status; file contents remain in Vapi. | organization/agent cascade delete; unique Vapi file id; processing-status enum |
@@ -283,7 +296,8 @@ cp .env.example .env
 | `TWILIO_AUTH_TOKEN`    | voice              | Twilio Console -> Account. Used only to verify `X-Twilio-Signature` |
 | `VAPI_PRIVATE_API_KEY` | voice              | Vapi dashboard -> API Keys |
 | `VAPI_WEBHOOK_SECRET`  | voice              | A secret you choose — see step 5 below |
-| `OPENAI_API_KEY` | custom voice | OpenAI API key; required by the Media Streams service |
+| `OPENAI_API_KEY` | custom voice / handoff | OpenAI API key; required by Media Streams and used for handoff summaries |
+| `OPENAI_HANDOFF_SUMMARY_MODEL` | handoff | Optional; defaults to `gpt-4o-mini` |
 | `MEDIA_STREAMS_URL` | custom voice | Public `wss://` URL ending in `/media-streams`; route it to the standalone service |
 | `MEDIA_STREAMS_SECRET` | custom voice | At least 32 characters; shared by Next.js and the Media Streams service |
 | `OPENAI_REALTIME_MODEL` | custom voice | Optional; defaults to `gpt-realtime-2.1` |
@@ -505,12 +519,12 @@ npm run build
 - Scheduled campaigns, automated pacing/retries, durable campaign queues,
   Redis, BullMQ
 - Billing, public API write operations, API rate limiting and webhooks
-- Human handoff beyond the single fixed `transfer_call` destination,
+- Human handoff routing beyond the single fixed `transfer_call` destination,
   sentiment analysis
 - Automated Twilio/Vapi provisioning (buying numbers, importing them,
   creating Server URL credentials) — all manual, see above
-- Organization invites (a second member currently has to be inserted by
-  hand)
+- Automated email delivery for organization invites (links can currently
+  be copied and sent by a workspace owner or admin)
 - HMAC-based Vapi webhook verification (shared-secret only — see
   `server/integrations/vapi/verify.ts` for why)
 - Retrying a genuinely-duplicated Twilio inbound webhook without creating

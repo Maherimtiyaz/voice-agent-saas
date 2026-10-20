@@ -18,11 +18,12 @@ function SubmitButton() {
   );
 }
 
-export function LoginForm() {
+export function LoginForm({ nextPath }: { nextPath?: string }) {
   const [state, formAction] = useActionState(loginAction, undefined);
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
+      {nextPath && <input type="hidden" name="next" value={nextPath} />}
       <div>
         <Label htmlFor="email">Email</Label>
         <Input id="email" name="email" type="email" autoComplete="email" required />

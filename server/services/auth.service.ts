@@ -19,10 +19,8 @@ export interface RegisterResult {
 
 /**
  * Creates a brand-new user AND their first organization together, in a
- * single transaction, with the user set as `owner`. There's no
- * "join an existing organization" flow yet (that needs invites, which
- * are out of scope for Phase 1) — every registration starts a new
- * workspace.
+ * single transaction, with the user set as `owner`. Invite-based
+ * registration is handled separately by organization-invite.service.ts.
  */
 export async function registerUser(
   db: Database,

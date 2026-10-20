@@ -95,6 +95,62 @@ export default async function CallDetailPage({
         </dl>
       </Card>
 
+      {call.handoffs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Human handoff</CardTitle>
+            <CardDescription>
+              AI-generated context shared privately with the receiving team member.
+            </CardDescription>
+          </CardHeader>
+          <div className="flex flex-col gap-3">
+            {call.handoffs.map((handoff) => (
+              <div
+                key={handoff.id}
+                className="rounded-lg border border-border p-4"
+              >
+                <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-muted">Status</dt>
+                    <dd className="capitalize text-foreground">
+                      {handoff.status.replace("_", " ")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Destination</dt>
+                    <dd className="font-mono text-foreground">
+                      {handoff.destinationNumber}
+                    </dd>
+                  </div>
+                  {handoff.reason && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-muted">Transfer reason</dt>
+                      <dd className="text-foreground">{handoff.reason}</dd>
+                    </div>
+                  )}
+                  <div className="sm:col-span-2">
+                    <dt className="text-muted">Briefing shared with recipient</dt>
+                    <dd className="text-foreground">{handoff.summary}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Started</dt>
+                    <dd className="text-foreground">
+                      {handoff.createdAt.toLocaleString()}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Connected</dt>
+                    <dd className="text-foreground">
+                      {handoff.answeredAt?.toLocaleString() ?? "—"}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Transcript</CardTitle>

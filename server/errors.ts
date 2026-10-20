@@ -51,3 +51,15 @@ export class ConflictError extends AppError {
     super(message);
   }
 }
+
+export class InvalidInvitationError extends AppError {
+  constructor() {
+    super("This invitation is invalid, expired, revoked, or already accepted.");
+  }
+}
+
+export class InvitationEmailMismatchError extends AppError {
+  constructor() {
+    super("Sign in with the email address this invitation was sent to.");
+  }
+}

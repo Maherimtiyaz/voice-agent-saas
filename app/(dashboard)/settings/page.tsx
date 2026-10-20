@@ -16,6 +16,8 @@ import { disconnectGoogleCalendar } from "@/app/actions/calendar.actions";
 import { getHubSpotConnectionStatus } from "@/server/integrations/hubspot/client";
 import { listApiKeys } from "@/server/services/api-key.service";
 import { ApiKeyManagement } from "./api-key-management";
+import { OrganizationInviteManagement } from "./organization-invite-management";
+import { listPendingOrganizationInvites } from "@/server/services/organization-invite.service";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -34,6 +36,7 @@ export default async function SettingsPage({
     calendarConnection,
     hubspotConnection,
     apiKeys,
+    invites,
   ] = await Promise.all([
     searchParams,
     getOrganization(db, { organizationId, userId: user.id }),
@@ -46,6 +49,9 @@ export default async function SettingsPage({
     getHubSpotConnectionStatus(db, organizationId),
     role === "owner" || role === "admin"
       ? listApiKeys(db, { organizationId, userId: user.id })
+      : Promise.resolve([]),
+    role === "owner" || role === "admin"
+      ? listPendingOrganizationInvites(db, { organizationId, userId: user.id })
       : Promise.resolve([]),
   ]);
   const isCalendarConnected = calendarConnection.length > 0;
@@ -189,6 +195,14 @@ export default async function SettingsPage({
             </div>
           ))}
         </div>
+        {(role === "owner" || role === "admin") && (
+          <div className="mt-6 border-t border-border pt-5">
+            <OrganizationInviteManagement
+              invites={invites}
+              canInviteAdmin={role === "owner"}
+            />
+          </div>
+        )}
       </Card>
     </div>
   );

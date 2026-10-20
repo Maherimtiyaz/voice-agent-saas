@@ -78,7 +78,12 @@ export async function loginAction(
   }
 
   await createSessionCookie({ userId, activeOrganizationId });
-  redirect("/dashboard");
+  const next = formData.get("next");
+  redirect(
+    typeof next === "string" && /^\/invite\/[A-Za-z0-9_-]{43}$/.test(next)
+      ? next
+      : "/dashboard",
+  );
 }
 
 export async function logoutAction(): Promise<void> {

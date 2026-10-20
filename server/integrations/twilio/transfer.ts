@@ -1,5 +1,6 @@
 import "server-only";
 import twilio from "twilio";
+import { getTwilioWebhookUrl } from "@/server/integrations/twilio/verify";
 
 function getClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -19,6 +20,30 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
+export function buildHandoffTransferTwiml(params: {
+  destinationNumber: string;
+  handoffId: string;
+  announcement?: string;
+}): string {
+  const handoffId = encodeURIComponent(params.handoffId);
+  const whisperUrl = new URL(
+    `${getTwilioWebhookUrl("/api/voice/twilio/handoff/whisper")}?handoffId=${handoffId}`,
+  ).toString();
+  const statusUrl = new URL(
+    `${getTwilioWebhookUrl("/api/voice/twilio/handoff/status")}?handoffId=${handoffId}`,
+  ).toString();
+  const say = params.announcement
+    ? `<Say>${escapeXml(params.announcement)}</Say>`
+    : "";
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?><Response>${say}` +
+    `<Dial action="${escapeXml(statusUrl)}" method="POST" timeout="25">` +
+    `<Number url="${escapeXml(whisperUrl)}" method="POST">${escapeXml(
+      params.destinationNumber,
+    )}</Number></Dial></Response>`
+  );
+}
+
 /**
  * Redirects a LIVE, in-progress Twilio call to a new destination by
  * updating the Call resource with fresh TwiML (`client.calls(sid).update
@@ -31,15 +56,11 @@ function escapeXml(value: string): string {
 export async function transferLiveCall(params: {
   twilioCallSid: string;
   destinationNumber: string;
+  handoffId: string;
   announcement?: string;
 }): Promise<void> {
   const client = getClient();
-  const say = params.announcement
-    ? `<Say>${escapeXml(params.announcement)}</Say>`
-    : "";
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response>${say}<Dial>${escapeXml(
-    params.destinationNumber,
-  )}</Dial></Response>`;
-
-  await client.calls(params.twilioCallSid).update({ twiml });
+  await client.calls(params.twilioCallSid).update({
+    twiml: buildHandoffTransferTwiml(params),
+  });
 }
