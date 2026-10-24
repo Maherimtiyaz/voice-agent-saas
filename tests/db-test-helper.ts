@@ -26,6 +26,8 @@ const SCHEMA_SQL = `
   create type campaign_status as enum ('draft', 'active', 'paused', 'completed');
   create type campaign_contact_status as enum ('pending', 'calling', 'completed', 'failed', 'no_answer');
   create type knowledge_file_status as enum ('processing', 'done', 'failed');
+  create type demo_request_status as enum ('new', 'contacted', 'closed');
+  create type email_outbox_status as enum ('pending', 'sent', 'failed');
 
   create table organizations (
     id uuid primary key default gen_random_uuid(),
@@ -308,6 +310,55 @@ const SCHEMA_SQL = `
     created_at timestamptz not null default now()
   );
   create index tool_executions_call_id_idx on tool_executions (call_id);
+
+  create table demo_requests (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    email text not null,
+    company text,
+    phone text,
+    use_case text,
+    call_volume text,
+    message text,
+    status demo_request_status not null default 'new',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create unique index demo_requests_email_unique on demo_requests (email);
+  create index demo_requests_status_created_idx
+    on demo_requests (status, created_at);
+
+  create table email_outbox (
+    id uuid primary key default gen_random_uuid(),
+    organization_id uuid not null references organizations (id) on delete cascade,
+    to_email text not null,
+    subject text not null,
+    body text not null,
+    kind text not null default 'organization_invite',
+    status email_outbox_status not null default 'pending',
+    attempts integer not null default 0,
+    last_error text,
+    sent_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create index email_outbox_organization_created_idx
+    on email_outbox (organization_id, created_at);
+  create index email_outbox_status_created_idx
+    on email_outbox (status, created_at);
+
+  create table rate_limit_counters (
+    bucket text not null,
+    key text not null,
+    window_start timestamptz not null,
+    count integer not null default 0,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  create unique index rate_limit_counters_bucket_key_window_unique
+    on rate_limit_counters (bucket, key, window_start);
+  create index rate_limit_counters_window_start_idx
+    on rate_limit_counters (window_start);
 `;
 
 export type TestDatabase = Awaited<ReturnType<typeof createTestDatabase>>;

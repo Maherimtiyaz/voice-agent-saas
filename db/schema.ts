@@ -133,6 +133,18 @@ export const knowledgeFileStatusEnum = pgEnum("knowledge_file_status", [
   "failed",
 ]);
 
+export const demoRequestStatusEnum = pgEnum("demo_request_status", [
+  "new",
+  "contacted",
+  "closed",
+]);
+
+export const emailOutboxStatusEnum = pgEnum("email_outbox_status", [
+  "pending",
+  "sent",
+  "failed",
+]);
+
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -246,6 +258,129 @@ export const organizationInvites = pgTable("organization_invites", {
     table.organizationId,
     table.createdAt,
   ),
+}));
+
+/**
+ * Public landing-page leads ("Request a demo" / "Join early access").
+ *
+ * These are NOT accounts — no password, no user row. A lead is a
+ * stranger who filled in the public form, so the table is deliberately
+ * not part of the tenant model: it has no `organization_id`, and it is
+ * never joined to `users`. The only reason it exists is so the team
+ * can follow up. `email` is unique so one person can't silently create
+ * duplicate leads by double-submitting, and re-submitting the same
+ * email updates the existing row instead.
+ */
+export const demoRequests = pgTable("demo_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  company: text("company"),
+  phone: text("phone"),
+  // What the lead told us they want the agent to do — drives the demo.
+  useCase: text("use_case"),
+  // Free-text volume estimate ("10-50 calls/day"). Kept as text
+  // because it is a survey answer, not a computed metric.
+  callVolume: text("call_volume"),
+  message: text("message"),
+  status: demoRequestStatusEnum("status").notNull().default("new"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  emailUnique: uniqueIndex("demo_requests_email_unique").on(table.email),
+  statusCreatedIdx: index("demo_requests_status_created_idx").on(
+    table.status,
+    table.createdAt,
+  ),
+}));
+
+/**
+ * Durable outbox for transactional email (today: workspace invitation
+ * links).
+ *
+ * Writing the email row and marking the invite "emailed" happen in the
+ * SAME transaction as creating the invite, so we can never end up with
+ * an invite that was sent but has no record, or a record of an email
+ * that was never queued. A separate process (or a manual trigger) then
+ * drains `pending` rows through the configured email provider.
+ *
+ * `attempts` and `lastError` make retries observable: a row that has
+ * been attempted more than once and is still `pending` is a delivery
+ * problem someone needs to look at, not something to retry silently
+ * forever.
+ */
+export const emailOutbox = pgTable("email_outbox", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  toEmail: text("to_email").notNull(),
+  subject: text("subject").notNull(),
+  // Rendered plain-text body. Stored as text (not HTML) so it can be
+  // used as-is by any provider and is greppable in the database.
+  body: text("body").notNull(),
+  // Which flow created this email — lets us trace an email back to
+  // the invite that caused it.
+  kind: text("kind").notNull().default("organization_invite"),
+  status: emailOutboxStatusEnum("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  orgCreatedIdx: index("email_outbox_organization_created_idx").on(
+    table.organizationId,
+    table.createdAt,
+  ),
+  statusCreatedIdx: index("email_outbox_status_created_idx").on(
+    table.status,
+    table.createdAt,
+  ),
+}));
+
+/**
+ * Fixed-window rate-limit counters.
+ *
+ * The key is the caller identity that the limit applies to (an API key
+ * id, an IP address, an email address, ...), scoped by `bucket` so
+ * different limits can share the table without colliding. `windowStart`
+ * is the start of the current fixed window and `count` is how many
+ * requests have been seen in it.
+ *
+ * The counter is read and written in ONE statement (see
+ * server/services/rate-limit.service.ts) so concurrent requests can't
+ * both read "count = 4" and both write "count = 5" and let a caller
+ * exceed the limit. The primary key is (bucket, key, windowStart) so
+ * the upsert is a conflict on a natural key rather than a
+ * read-then-write race.
+ */
+export const rateLimitCounters = pgTable("rate_limit_counters", {
+  bucket: text("bucket").notNull(),
+  key: text("key").notNull(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  counterPk: uniqueIndex("rate_limit_counters_bucket_key_window_unique").on(
+    table.bucket,
+    table.key,
+    table.windowStart,
+  ),
+  windowIdx: index("rate_limit_counters_window_start_idx").on(table.windowStart),
 }));
 
 export const apiKeys = pgTable("api_keys", {
@@ -664,6 +799,7 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
   googleCalendarIntegration: one(googleCalendarIntegrations),
   hubspotIntegration: one(hubspotIntegrations),
   campaigns: many(campaigns),
+  emails: many(emailOutbox),
 }));
 
 export const googleCalendarIntegrationsRelations = relations(
@@ -891,6 +1027,13 @@ export const toolExecutionsRelations = relations(toolExecutions, ({ one }) => ({
   }),
 }));
 
+export const emailOutboxRelations = relations(emailOutbox, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [emailOutbox.organizationId],
+    references: [organizations.id],
+  }),
+}));
+
 export type Organization = typeof organizations.$inferSelect;
 export type NewOrganization = typeof organizations.$inferInsert;
 export type GoogleCalendarIntegration = typeof googleCalendarIntegrations.$inferSelect;
@@ -931,6 +1074,11 @@ export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type ToolExecution = typeof toolExecutions.$inferSelect;
 export type NewToolExecution = typeof toolExecutions.$inferInsert;
+export type DemoRequest = typeof demoRequests.$inferSelect;
+export type NewDemoRequest = typeof demoRequests.$inferInsert;
+export type EmailOutboxEntry = typeof emailOutbox.$inferSelect;
+export type NewEmailOutboxEntry = typeof emailOutbox.$inferInsert;
+export type RateLimitCounter = typeof rateLimitCounters.$inferSelect;
 export type MemberRole = (typeof memberRoleEnum.enumValues)[number];
 export type AgentStatus = (typeof agentStatusEnum.enumValues)[number];
 export type PhoneNumberStatus = (typeof phoneNumberStatusEnum.enumValues)[number];
@@ -946,3 +1094,5 @@ export type WebhookProvider = (typeof webhookProviderEnum.enumValues)[number];
 export type AppointmentStatus = (typeof appointmentStatusEnum.enumValues)[number];
 export type JobStatus = (typeof jobStatusEnum.enumValues)[number];
 export type ToolExecutionStatus = (typeof toolExecutionStatusEnum.enumValues)[number];
+export type DemoRequestStatus = (typeof demoRequestStatusEnum.enumValues)[number];
+export type EmailOutboxStatus = (typeof emailOutboxStatusEnum.enumValues)[number];
