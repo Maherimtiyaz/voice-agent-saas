@@ -1,6 +1,7 @@
 import "server-only";
 import type { Database } from "@/db";
 import { authenticateApiKey } from "@/server/services/api-key.service";
+import { consumeRateLimit } from "@/server/services/rate-limit.service";
 
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
@@ -17,6 +18,23 @@ export function apiError(message: string, status: number): Response {
   );
 }
 
+/**
+ * A 429 response, with the standard `Retry-After` header so a client
+ * knows when to come back.
+ */
+export function apiRateLimited(message: string, retryAfterSeconds: number): Response {
+  return Response.json(
+    { error: { message } },
+    {
+      status: 429,
+      headers: {
+        ...NO_STORE_HEADERS,
+        "Retry-After": String(retryAfterSeconds),
+      },
+    },
+  );
+}
+
 export async function authorizePublicApiRequest(
   db: Database,
   request: Request,
@@ -28,6 +46,23 @@ export async function authorizePublicApiRequest(
   if (!identity) {
     return {
       error: apiError("A valid workspace API key is required.", 401),
+    };
+  }
+
+  // Rate limit per API key, not per organization: a workspace with
+  // several keys gets the sum of them, which is the honest reading of
+  // "this key made this many requests".
+  const limit = await consumeRateLimit(db, {
+    bucket: "public_api",
+    key: identity.id,
+  });
+
+  if (!limit.allowed) {
+    return {
+      error: apiRateLimited(
+        `Rate limit exceeded. Try again in ${limit.retryAfterSeconds} seconds.`,
+        limit.retryAfterSeconds,
+      ),
     };
   }
 
