@@ -84,7 +84,9 @@ export function OrganizationInviteManagement({
       {state?.inviteUrl && (
         <div className="rounded-md border border-accent/30 bg-accent/5 p-4">
           <p className="text-sm font-medium text-foreground">
-            This link is shown only once. Anyone with it can join as the invited email.
+            {state.emailed
+              ? "This link is shown only once, in case you need to resend it. Anyone with it can join as the invited email."
+              : "This link is shown only once. Anyone with it can join as the invited email."}
           </p>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
             <Input aria-label="Invitation link" readOnly value={state.inviteUrl} />

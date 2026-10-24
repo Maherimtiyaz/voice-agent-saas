@@ -18,6 +18,7 @@ import {
   InvalidInvitationError,
 } from "@/server/errors";
 import { requireMembership } from "@/server/services/organization.service";
+import { queueEmail } from "@/server/services/email-outbox.service";
 
 const INVITE_LIFETIME_DAYS = 7;
 
@@ -48,6 +49,14 @@ export async function createOrganizationInvite(
     userId: string;
     email: string;
     role: "admin" | "member";
+    /**
+     * The public origin of this app, used to build the invite link
+     * that goes into the email body. Omit it (or pass null) to skip
+     * queueing an email — the link is then only available to copy
+     * manually, which is what happens when no email provider is
+     * configured.
+     */
+    appUrl?: string | null;
   },
 ): Promise<{ inviteId: string; token: string; expiresAt: Date }> {
   const actualRole = await requireMembership(db, {
@@ -94,7 +103,7 @@ export async function createOrganizationInvite(
           ),
         );
 
-      return tx
+      const created = await tx
         .insert(organizationInvites)
         .values({
           organizationId: params.organizationId,
@@ -105,6 +114,28 @@ export async function createOrganizationInvite(
           expiresAt,
         })
         .returning({ id: organizationInvites.id, expiresAt: organizationInvites.expiresAt });
+
+      // The email is queued in the SAME transaction as the invite, so
+      // we can never end up with an invite that exists but was never
+      // queued for delivery (or the reverse).
+      const appUrl = params.appUrl?.trim();
+      if (appUrl) {
+        const inviteUrl = `${appUrl.replace(/\/$/, "")}/invite/${token}`;
+        await queueEmail(tx, {
+          organizationId: params.organizationId,
+          to: email,
+          subject: `You've been invited to join a workspace`,
+          body: buildInvitationEmailBody({
+            inviteUrl,
+            organizationName: await organizationName(tx, params.organizationId),
+            role: params.role,
+            expiresAt,
+          }),
+          kind: "organization_invite",
+        });
+      }
+
+      return created;
     });
   } catch (error) {
     if (isUniqueViolation(error)) {
@@ -114,6 +145,31 @@ export async function createOrganizationInvite(
   }
 
   return { inviteId: invite.id, token, expiresAt: invite.expiresAt };
+}
+
+async function organizationName(db: Database, organizationId: string): Promise<string> {
+  const [row] = await db
+    .select({ name: organizations.name })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .limit(1);
+  return row?.name ?? "a workspace";
+}
+
+function buildInvitationEmailBody(params: {
+  inviteUrl: string;
+  organizationName: string;
+  role: MemberRole;
+  expiresAt: Date;
+}): string {
+  const expiry = params.expiresAt.toISOString().slice(0, 10);
+  return [
+    `You have been invited to join ${params.organizationName} as a ${params.role}.`,
+    "",
+    `Accept the invitation: ${params.inviteUrl}`,
+    "",
+    `This link expires on ${expiry}. If you were not expecting this invitation, you can ignore this email.`,
+  ].join("\n");
 }
 
 export async function listPendingOrganizationInvites(

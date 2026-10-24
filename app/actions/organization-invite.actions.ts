@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { createSessionCookie } from "@/lib/session";
 import { requireCurrentContext, requireCurrentUser } from "@/server/auth/current-user";
 import { AppError } from "@/server/errors";
+import { isEmailConfigured } from "@/server/integrations/email/client";
 import {
   acceptOrganizationInvite,
   createOrganizationInvite,
@@ -17,9 +18,10 @@ import {
   inviteRegistrationSchema,
   inviteTokenSchema,
 } from "@/server/validation/auth";
+import { emailSchema } from "@/server/validation/email";
 
 const createInviteSchema = z.object({
-  email: z.email("Enter a valid email address.").trim().toLowerCase(),
+  email: emailSchema(),
   role: z.enum(["admin", "member"]),
 });
 
@@ -27,6 +29,8 @@ export interface OrganizationInviteActionState {
   errors?: Record<string, string[]>;
   message?: string;
   inviteUrl?: string;
+  /** True when the invitation email was queued for delivery. */
+  emailed?: boolean;
 }
 
 function inviteBaseUrl(): string | null {
@@ -67,17 +71,26 @@ export async function createOrganizationInviteAction(
     return { message: "APP_URL must be configured with the public application origin before creating invites." };
   }
 
+  // An email provider is optional. When one is configured the invite
+  // email is queued automatically; when it is not, the admin still
+  // gets a copyable link and the old manual flow is unchanged.
+  const canEmail = isEmailConfigured();
+
   try {
     const created = await createOrganizationInvite(db, {
       organizationId,
       userId: user.id,
       email: validated.data.email,
       role: validated.data.role,
+      appUrl: canEmail ? baseUrl : null,
     });
     revalidatePath("/settings");
     return {
       inviteUrl: new URL(`/invite/${created.token}`, baseUrl).toString(),
-      message: "Invitation created. Copy the link and send it to the invited person; it expires in 7 days.",
+      emailed: canEmail,
+      message: canEmail
+        ? "Invitation created and emailed. The link below is shown once in case you need to resend it."
+        : "Invitation created. Copy the link and send it to the invited person; it expires in 7 days.",
     };
   } catch (error) {
     if (error instanceof AppError) return { message: error.message };
