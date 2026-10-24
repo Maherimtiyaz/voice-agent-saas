@@ -57,3 +57,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# browser-automation artifacts (screenshots, page snapshots)
+.playwright-mcp/
+
+CODE-NOTES.md
+AGENTS.md
+CLAUDE.md
