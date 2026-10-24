@@ -11,7 +11,8 @@ import {
 import type { Call, CallStatus, CallTranscript, CallOutcome, TranscriptRole, WebhookProvider } from "@/db/schema";
 import { NotFoundError } from "@/server/errors";
 import { isUniqueViolation } from "@/server/db-errors";
-import { finishCampaignContact } from "@/server/services/campaign.service";
+import { finishCampaignContact, recordDispatchFailure } from "@/server/services/campaign.service";
+import type { CampaignDispatchFailureResult } from "@/server/services/campaign.service";
 import { requireMembership } from "@/server/services/organization.service";
 
 
@@ -110,22 +111,37 @@ export async function setCampaignCallVapiId(
   return call;
 }
 
+/**
+ * Marks a campaign dispatch as failed.
+ *
+ * The call row is always closed, but the CONTACT goes through the retry
+ * policy: a transient Vapi/network failure should not permanently write
+ * off a contact that has attempts left. The caller gets the decision
+ * back so it can tell the operator whether another attempt is queued.
+ */
 export async function failCampaignCall(
   db: Database,
-  params: { callId: string; campaignContactId: string; reason: string },
-): Promise<void> {
+  params: {
+    callId: string;
+    campaignContactId: string;
+    reason: string;
+    now?: Date;
+  },
+): Promise<CampaignDispatchFailureResult | null> {
+  const now = params.now ?? new Date();
   await db
     .update(calls)
     .set({
       status: "failed",
       endedReason: params.reason,
-      endedAt: new Date(),
-      updatedAt: new Date(),
+      endedAt: now,
+      updatedAt: now,
     })
     .where(eq(calls.id, params.callId));
-  await finishCampaignContact(db, {
+  return recordDispatchFailure(db, {
     contactId: params.campaignContactId,
-    status: "failed",
+    error: params.reason,
+    now,
   });
 }
 

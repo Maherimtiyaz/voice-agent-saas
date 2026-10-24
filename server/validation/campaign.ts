@@ -29,3 +29,36 @@ export const addCampaignContactsSchema = z.object({
 });
 
 export type AddCampaignContactsInput = z.infer<typeof addCampaignContactsSchema>;
+
+/**
+ * Scheduler settings. An empty `scheduledAt` means "do not start by
+ * itself" — the campaign stays a draft until a member starts it.
+ *
+ * The pacing floor of 10 seconds is deliberate: a campaign that calls
+ * hundreds of numbers back-to-back is indistinguishable from a
+ * robocaller, which is how a Twilio number gets flagged.
+ */
+export const scheduleCampaignSchema = z.object({
+  campaignId: z.string().uuid(),
+  scheduledAt: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? new Date(value) : null))
+    .refine(
+      (value) => value === null || !Number.isNaN(value.getTime()),
+      "Enter a valid start time.",
+    ),
+  dispatchIntervalSeconds: z.coerce
+    .number()
+    .int()
+    .min(10, "Leave at least 10 seconds between calls.")
+    .max(86_400, "The longest supported interval is 24 hours."),
+  maxAttempts: z.coerce
+    .number()
+    .int()
+    .min(1, "Allow at least one attempt.")
+    .max(10, "Allow no more than 10 attempts per contact."),
+});
+
+export type ScheduleCampaignInput = z.infer<typeof scheduleCampaignSchema>;
