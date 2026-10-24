@@ -9,11 +9,13 @@ import { NotFoundError } from "@/server/errors";
 import { getCampaignDetails } from "@/server/services/campaign.service";
 import { AddContactsForm } from "./add-contacts-form";
 import { CampaignControls } from "./campaign-controls";
+import { ScheduleForm } from "./schedule-form";
 
 export const metadata: Metadata = { title: "Campaign" };
 
 const CAMPAIGN_STATUS_STYLES: Record<CampaignStatus, string> = {
   draft: "bg-black/[0.06] text-foreground",
+  scheduled: "bg-black/[0.06] text-foreground",
   active: "bg-accent/10 text-accent",
   paused: "bg-black/[0.06] text-muted",
   completed: "bg-black/[0.06] text-muted",
@@ -48,7 +50,9 @@ export default async function CampaignDetailPage({
 
   const { campaign, contacts } = details;
   const canAddContacts =
-    (campaign.status === "draft" || campaign.status === "paused") &&
+    (campaign.status === "draft" ||
+      campaign.status === "paused" ||
+      campaign.status === "scheduled") &&
     campaign.activeContactId === null;
 
   return (
@@ -78,6 +82,17 @@ export default async function CampaignDetailPage({
         <CampaignControls campaign={campaign} />
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Scheduling</CardTitle>
+          <CardDescription>
+            The scheduler runs on a cron and dispatches one call per campaign per tick.
+            Without a start time, nothing is dispatched until a member starts the campaign.
+          </CardDescription>
+        </CardHeader>
+        <ScheduleForm campaign={campaign} />
+      </Card>
+
       {canAddContacts && (
         <Card>
           <CardHeader>
@@ -100,14 +115,16 @@ export default async function CampaignDetailPage({
         {contacts.length === 0 ? (
           <p className="text-sm text-muted">No contacts have been added.</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-xs uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-4 py-2 font-medium">Phone number</th>
                   <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Attempts</th>
+                  <th className="px-4 py-2 font-medium">Next attempt</th>
                   <th className="px-4 py-2 font-medium">Consent confirmed</th>
-                  <th className="px-4 py-2 font-medium">Confirmed by</th>
+                  <th className="px-4 py-2 font-medium">Last error</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -120,10 +137,20 @@ export default async function CampaignDetailPage({
                       {contact.status.replace("_", " ")}
                     </td>
                     <td className="px-4 py-2 text-xs text-muted">
+                      {contact.attempts} / {campaign.maxAttempts}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted">
+                      {contact.status === "pending" &&
+                      contact.attempts > 0 &&
+                      contact.nextAttemptAt
+                        ? contact.nextAttemptAt.toISOString().replace("T", " ").slice(0, 16)
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-muted">
                       {contact.consentConfirmedAt.toISOString().slice(0, 10)} UTC
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-muted">
-                      {contact.consentConfirmedByUserId}
+                    <td className="max-w-xs truncate px-4 py-2 text-xs text-danger" title={contact.lastError ?? undefined}>
+                      {contact.lastError ?? "—"}
                     </td>
                   </tr>
                 ))}

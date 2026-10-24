@@ -13,6 +13,7 @@ export const metadata: Metadata = { title: "Campaigns" };
 
 const STATUS_STYLES: Record<CampaignStatus, string> = {
   draft: "bg-black/[0.06] text-foreground",
+  scheduled: "bg-black/[0.06] text-foreground",
   active: "bg-accent/10 text-accent",
   paused: "bg-black/[0.06] text-muted",
   completed: "bg-black/[0.06] text-muted",
