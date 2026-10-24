@@ -327,6 +327,7 @@ cp .env.example .env
 | `EMAIL_FROM`           | email              | Sender address, e.g. `Voice Agent Platform <hello@your-domain.com>` |
 | `EMAIL_API_URL`        | email              | Optional. Provider base URL. Defaults to `https://api.resend.com` |
 | `EMAIL_CRON_SECRET`    | email              | Shared secret for `POST /api/internal/email/outbox`. If unset, that endpoint returns 404 |
+| `CAMPAIGN_CRON_SECRET` | campaigns          | Shared secret for `POST /api/internal/campaigns/tick`. If unset, that endpoint returns 404 |
 | `ADMIN_USERNAME`       | admin              | HTTP Basic auth username for `/api/admin/demo-requests`. If unset, that endpoint returns 404 |
 | `ADMIN_PASSWORD`       | admin              | HTTP Basic auth password for `/api/admin/demo-requests` |
 
@@ -591,7 +592,41 @@ shape (Resend and several other providers implement it) over plain
 unchanged**: the invite link is shown once in Settings for an owner or
 admin to copy and send by hand. Nothing is silently dropped either way.
 
-### 12. Run tests
+### 12. Campaign scheduling and retries
+
+Outbound campaigns are dispatched by a scheduler, not only by a button in
+the UI.
+
+- **Claiming is a compare-and-set.** The campaign row is updated with
+  `active_contact_id IS NULL` in the `WHERE` clause, so two overlapping
+  scheduler runs cannot both dial the same contact. The contact moves from
+  `pending` to `calling` in the same transaction.
+- **Attempts are counted at claim time**, not after the provider call, so a
+  process that dies mid-dispatch still burns an attempt instead of retrying
+  forever.
+- **Scheduling** stores `scheduled_at`; a campaign in `scheduled` is only
+  picked up once that time has passed. `dispatch_interval_seconds` sets the
+  minimum spacing between calls, and `max_attempts` caps retries per
+  contact.
+- **Retries cover failed dispatches only** — a provider or network error
+  that prevented the call from being placed. Backoff is 5, 15, then 60
+  minutes. A call that goes unanswered is *not* re-dialled: that is a
+  product decision rather than a reliability fix, and it is easy to get
+  wrong in a way that harasses people.
+- **Stale claims are released.** If a dispatch is claimed but never
+  confirmed, `reapStaleDispatches` puts the contact back in the queue after
+  15 minutes — unless a call row for it is still `ringing` or
+  `in_progress`, in which case it is a real call and is left alone.
+- **Each tick places at most one call per campaign**, so one campaign
+  cannot consume the whole run.
+
+Point a scheduler at `POST /api/internal/campaigns/tick` with
+`Authorization: Bearer $CAMPAIGN_CRON_SECRET`. If the variable is unset the
+endpoint returns `404`. The UI still offers a manual "Call next contact",
+which uses the same claim path and therefore respects the same schedule and
+pacing.
+
+### 13. Run tests
 
 ```bash
 npm test
@@ -601,7 +636,7 @@ Tests need no live database or provider credentials: service tests use an
 in-memory Postgres (pglite), and provider integrations use controlled HTTP
 responses and signature fixtures.
 
-### 13. Type-check and build
+### 14. Type-check and build
 
 ```bash
 npm run typecheck   # next typegen && tsc --noEmit
@@ -614,8 +649,10 @@ npm run build
 - Calendar provider alternatives (for now, only Google Calendar is supported)
 - HubSpot bulk backfill for pre-existing jobs, and multi-provider CRM support
 - A generic, user-configurable workflow engine
-- Scheduled campaigns, automated pacing/retries, durable campaign queues,
-  Redis, BullMQ
+- Retrying calls that went unanswered or reached voicemail (only failed
+  dispatches are retried), per-contact calling windows and time zones, and
+  a dedicated queue (Redis/BullMQ) — the scheduler is Postgres-backed and
+  cron-driven
 - Billing, public API write operations and webhooks
 - Human handoff routing beyond the single fixed `transfer_call` destination,
   sentiment analysis
