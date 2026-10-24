@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RegisterForm } from "./register-form";
 
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function RegisterPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
       <div className="w-full max-w-sm">
         <Card>
           <CardHeader>
@@ -19,6 +20,11 @@ export default function RegisterPage() {
           </CardHeader>
           <RegisterForm />
         </Card>
+        <p className="mt-6 text-center text-sm text-muted">
+          <Link href="/" className="font-medium text-accent hover:underline">
+            Back to the homepage
+          </Link>
+        </p>
       </div>
     </div>
   );
