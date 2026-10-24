@@ -23,7 +23,7 @@ const SCHEMA_SQL = `
   create type tool_execution_status as enum ('success', 'failure');
   create type call_outcome as enum ('appointment_booked', 'job_created', 'transferred_to_human', 'sms_sent');
   create type call_handoff_status as enum ('initiated', 'connected', 'completed', 'no_answer', 'failed');
-  create type campaign_status as enum ('draft', 'active', 'paused', 'completed');
+  create type campaign_status as enum ('draft', 'scheduled', 'active', 'paused', 'completed');
   create type campaign_contact_status as enum ('pending', 'calling', 'completed', 'failed', 'no_answer');
   create type knowledge_file_status as enum ('processing', 'done', 'failed');
   create type demo_request_status as enum ('new', 'contacted', 'closed');
@@ -170,6 +170,10 @@ const SCHEMA_SQL = `
     phone_number_id uuid not null references phone_numbers (id) on delete restrict,
     status campaign_status not null default 'draft',
     active_contact_id uuid,
+    scheduled_at timestamptz,
+    dispatch_interval_seconds integer not null default 60,
+    last_dispatched_at timestamptz,
+    max_attempts integer not null default 3,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
@@ -182,12 +186,17 @@ const SCHEMA_SQL = `
     consent_confirmed_at timestamptz not null,
     consent_confirmed_by_user_id uuid not null references users (id) on delete restrict,
     status campaign_contact_status not null default 'pending',
+    attempts integer not null default 0,
+    next_attempt_at timestamptz,
+    last_error text,
     created_at timestamptz not null default now()
   );
   create unique index campaign_contacts_campaign_phone_unique
     on campaign_contacts (campaign_id, phone_number);
   create index campaign_contacts_campaign_status_idx
     on campaign_contacts (campaign_id, status);
+  create index campaign_contacts_pending_idx
+    on campaign_contacts (campaign_id, status, next_attempt_at);
 
   create table calls (
     id uuid primary key default gen_random_uuid(),

@@ -114,6 +114,9 @@ export const callHandoffStatusEnum = pgEnum("call_handoff_status", [
 
 export const campaignStatusEnum = pgEnum("campaign_status", [
   "draft",
+  // Scheduled for a future start. The dispatcher only picks it up once
+  // `scheduled_at` has passed.
+  "scheduled",
   "active",
   "paused",
   "completed",
@@ -513,8 +516,22 @@ export const campaigns = pgTable("campaigns", {
     .notNull()
     .references(() => phoneNumbers.id, { onDelete: "restrict" }),
   status: campaignStatusEnum("status").notNull().default("draft"),
-  // A non-null claim prevents overlapping manual dispatches for a campaign.
+  // A non-null claim prevents overlapping dispatches for a campaign.
   activeContactId: uuid("active_contact_id"),
+  // Earliest time the dispatcher may start this campaign. Null means
+  // "as soon as it is started".
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  // Minimum spacing between two dispatches in the same campaign. This is
+  // what keeps an unattended run from placing every call back-to-back.
+  dispatchIntervalSeconds: integer("dispatch_interval_seconds")
+    .notNull()
+    .default(60),
+  // When the last contact was handed to the provider. Used both for
+  // pacing and to detect a dispatch that was claimed but never completed.
+  lastDispatchedAt: timestamp("last_dispatched_at", { withTimezone: true }),
+  // How many times a contact may be attempted before it is parked as
+  // failed instead of being retried again.
+  maxAttempts: integer("max_attempts").notNull().default(3),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -537,6 +554,16 @@ export const campaignContacts = pgTable("campaign_contacts", {
     .notNull()
     .references(() => users.id, { onDelete: "restrict" }),
   status: campaignContactStatusEnum("status").notNull().default("pending"),
+  // How many times this contact has been claimed for a call. Incremented
+  // at claim time, so a crash mid-dispatch still counts as an attempt.
+  attempts: integer("attempts").notNull().default(0),
+  // Earliest time this contact may be claimed again. Null means "no retry
+  // scheduled" — i.e. it has never failed — which is why new contacts are
+  // due immediately instead of waiting on the database clock.
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  // Why the last dispatch failed. Kept so a failure is diagnosable from
+  // the campaign page instead of only in server logs.
+  lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -548,6 +575,12 @@ export const campaignContacts = pgTable("campaign_contacts", {
   campaignStatusIdx: index("campaign_contacts_campaign_status_idx").on(
     table.campaignId,
     table.status,
+  ),
+  // The dispatcher's claim query filters on exactly this triple.
+  campaignPendingIdx: index("campaign_contacts_pending_idx").on(
+    table.campaignId,
+    table.status,
+    table.nextAttemptAt,
   ),
 }));
 

@@ -8,6 +8,20 @@
       "when": 1792510186045,
       "tag": "0000_fresh_colleen_wing",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792670478370,
+      "tag": "0001_loud_mariko_yashida",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792843992298,
+      "tag": "0002_amused_green_goblin",
+      "breakpoints": true
     }
   ]
 }
