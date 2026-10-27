@@ -16,7 +16,7 @@ export function WorkspaceSwitcher({
   if (organizations.length <= 1) {
     const only = organizations[0];
     return (
-      <span className="text-sm font-medium text-foreground">
+      <span className="truncate text-sm font-medium text-foreground">
         {only?.organizationName ?? "Workspace"}
       </span>
     );
@@ -28,7 +28,7 @@ export function WorkspaceSwitcher({
         name="organizationId"
         defaultValue={activeOrganizationId}
         onChange={() => formRef.current?.requestSubmit()}
-        className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm font-medium text-foreground"
+        className="max-w-[60vw] rounded-md border border-border bg-surface px-2 py-1.5 text-sm font-medium text-foreground sm:max-w-none"
         aria-label="Switch workspace"
       >
         {organizations.map((org) => (
