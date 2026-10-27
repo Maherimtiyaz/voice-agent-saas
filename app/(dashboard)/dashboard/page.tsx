@@ -75,7 +75,7 @@ export default async function DashboardOverviewPage() {
           </CardHeader>
           <Link
             href="/agents"
-            className="inline-flex w-fit items-center justify-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-black/[0.02]"
+            className="inline-flex w-fit items-center justify-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-foreground/[0.03]"
           >
             Manage agents
           </Link>
@@ -96,7 +96,7 @@ export default async function DashboardOverviewPage() {
           </CardHeader>
           <Link
             href="/calls"
-            className="inline-flex w-fit items-center justify-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-black/[0.02]"
+            className="inline-flex w-fit items-center justify-center rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium text-foreground hover:bg-foreground/[0.03]"
           >
             View calls
           </Link>
@@ -120,7 +120,7 @@ function StatCard({
   return (
     <Link
       href={href}
-      className="rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-black/[0.02]"
+      className="rounded-lg border border-border bg-surface p-5 transition-colors hover:bg-foreground/[0.03]"
     >
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>

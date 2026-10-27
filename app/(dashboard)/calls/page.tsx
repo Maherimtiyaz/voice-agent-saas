@@ -10,12 +10,12 @@ export const metadata: Metadata = {
 };
 
 const STATUS_STYLES: Record<string, string> = {
-  ringing: "bg-black/[0.06] text-foreground",
+  ringing: "bg-foreground/[0.07] text-foreground",
   in_progress: "bg-accent/10 text-accent",
   completed: "bg-accent/10 text-accent",
-  failed: "bg-red-100 text-danger",
-  no_answer: "bg-black/[0.06] text-muted",
-  voicemail: "bg-black/[0.06] text-muted",
+  failed: "bg-red-500/10 text-danger",
+  no_answer: "bg-foreground/[0.07] text-muted",
+  voicemail: "bg-foreground/[0.07] text-muted",
 };
 
 function formatDuration(seconds: number | null): string {
@@ -66,7 +66,7 @@ export default async function CallsPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {calls.map((call) => (
-                <tr key={call.id} className="hover:bg-black/[0.02]">
+                <tr key={call.id} className="hover:bg-foreground/[0.03]">
                   <td className="px-4 py-3">
                     <Link href={`/calls/${call.id}`} className="text-accent hover:underline">
                       {call.startedAt.toLocaleString(undefined, {

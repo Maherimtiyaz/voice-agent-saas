@@ -189,7 +189,7 @@ export default async function SettingsPage({
                 <p className="text-sm font-medium text-foreground">{member.name}</p>
                 <p className="text-sm text-muted">{member.email}</p>
               </div>
-              <span className="rounded-full bg-black/[0.06] px-2.5 py-1 text-xs font-medium capitalize text-foreground">
+              <span className="rounded-full bg-foreground/[0.07] px-2.5 py-1 text-xs font-medium capitalize text-foreground">
                 {member.role}
               </span>
             </div>

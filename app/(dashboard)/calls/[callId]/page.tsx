@@ -12,8 +12,8 @@ export const metadata: Metadata = {
 
 const ROLE_STYLES: Record<string, string> = {
   assistant: "bg-accent/10 text-accent",
-  user: "bg-black/[0.06] text-foreground",
-  system: "bg-black/[0.06] text-muted italic",
+  user: "bg-foreground/[0.07] text-foreground",
+  system: "bg-foreground/[0.07] text-muted italic",
 };
 
 export default async function CallDetailPage({

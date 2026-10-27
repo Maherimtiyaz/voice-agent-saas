@@ -87,7 +87,7 @@ export function AgentKnowledgeBase({
             type="file"
             accept=".csv,.doc,.docx,.json,.log,.md,.pdf,.tsv,.txt,.xml,.yaml,.yml"
             required
-            className="max-w-full text-xs text-muted file:mr-3 file:rounded-md file:border-0 file:bg-black/[0.06] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
+            className="max-w-full text-xs text-muted file:mr-3 file:rounded-md file:border-0 file:bg-foreground/[0.07] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
           />
         </div>
         <UploadButton />

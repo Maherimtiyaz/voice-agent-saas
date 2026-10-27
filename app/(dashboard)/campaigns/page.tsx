@@ -12,11 +12,11 @@ import { CreateCampaignForm } from "./create-campaign-form";
 export const metadata: Metadata = { title: "Campaigns" };
 
 const STATUS_STYLES: Record<CampaignStatus, string> = {
-  draft: "bg-black/[0.06] text-foreground",
-  scheduled: "bg-black/[0.06] text-foreground",
+  draft: "bg-foreground/[0.07] text-foreground",
+  scheduled: "bg-foreground/[0.07] text-foreground",
   active: "bg-accent/10 text-accent",
-  paused: "bg-black/[0.06] text-muted",
-  completed: "bg-black/[0.06] text-muted",
+  paused: "bg-foreground/[0.07] text-muted",
+  completed: "bg-foreground/[0.07] text-muted",
 };
 
 export default async function CampaignsPage() {
@@ -64,7 +64,7 @@ export default async function CampaignsPage() {
             <Link
               key={campaign.id}
               href={`/campaigns/${campaign.id}`}
-              className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-black/[0.02] sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-foreground/[0.03] sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
                 <p className="text-sm font-medium text-foreground">{campaign.name}</p>

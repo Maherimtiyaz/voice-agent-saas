@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-accent/10 text-accent",
-  inactive: "bg-black/[0.06] text-muted",
+  inactive: "bg-foreground/[0.07] text-muted",
 };
 
 export default async function PhoneNumbersPage() {

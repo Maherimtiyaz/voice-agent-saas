@@ -14,9 +14,9 @@ export const metadata: Metadata = {
 };
 
 const STATUS_STYLES: Record<string, string> = {
-  draft: "bg-black/[0.06] text-foreground",
+  draft: "bg-foreground/[0.07] text-foreground",
   active: "bg-accent/10 text-accent",
-  disabled: "bg-black/[0.06] text-muted",
+  disabled: "bg-foreground/[0.07] text-muted",
 };
 
 export default async function AgentsPage() {

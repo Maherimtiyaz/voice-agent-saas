@@ -49,7 +49,7 @@ export function OnboardingChecklist({ status }: { status: OnboardingStatus }) {
         </div>
 
         <div
-          className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.06]"
+          className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-foreground/[0.07]"
           role="progressbar"
           aria-valuenow={status.completedCount}
           aria-valuemin={0}

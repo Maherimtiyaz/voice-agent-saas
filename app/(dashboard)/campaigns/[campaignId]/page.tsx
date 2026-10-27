@@ -14,11 +14,11 @@ import { ScheduleForm } from "./schedule-form";
 export const metadata: Metadata = { title: "Campaign" };
 
 const CAMPAIGN_STATUS_STYLES: Record<CampaignStatus, string> = {
-  draft: "bg-black/[0.06] text-foreground",
-  scheduled: "bg-black/[0.06] text-foreground",
+  draft: "bg-foreground/[0.07] text-foreground",
+  scheduled: "bg-foreground/[0.07] text-foreground",
   active: "bg-accent/10 text-accent",
-  paused: "bg-black/[0.06] text-muted",
-  completed: "bg-black/[0.06] text-muted",
+  paused: "bg-foreground/[0.07] text-muted",
+  completed: "bg-foreground/[0.07] text-muted",
 };
 
 const CONTACT_STATUS_STYLES: Record<CampaignContactStatus, string> = {

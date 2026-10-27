@@ -32,7 +32,7 @@ export function ScheduleForm({ campaign }: { campaign: Campaign }) {
   const [state, formAction] = useActionState(scheduleCampaignAction, undefined);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    <form action={formAction} className="flex max-w-2xl flex-col gap-4">
       <input type="hidden" name="campaignId" value={campaign.id} />
       <div>
         <Label htmlFor="scheduledAt">
