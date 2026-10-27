@@ -1,4 +1,4 @@
-# Voice Agent Platform
+# SageLine
 
 A SaaS foundation for a product that lets businesses build AI phone agents:
 answer inbound calls, understand intent, call backend tools, and complete
@@ -324,7 +324,7 @@ cp .env.example .env
 | `HUBSPOT_CLIENT_SECRET`| CRM                | HubSpot public app client secret |
 | `CRM_TOKEN_ENCRYPTION_KEY` | CRM           | Base64-encoded 32-byte AES-256-GCM key for refresh tokens |
 | `EMAIL_API_KEY`        | email              | Transactional email provider API key. When set (with `EMAIL_FROM`), invitation links are emailed automatically |
-| `EMAIL_FROM`           | email              | Sender address, e.g. `Voice Agent Platform <hello@your-domain.com>` |
+| `EMAIL_FROM`           | email              | Sender address, e.g. `SageLine <hello@your-domain.com>` |
 | `EMAIL_API_URL`        | email              | Optional. Provider base URL. Defaults to `https://api.resend.com` |
 | `EMAIL_CRON_SECRET`    | email              | Shared secret for `POST /api/internal/email/outbox`. If unset, that endpoint returns 404 |
 | `CAMPAIGN_CRON_SECRET` | campaigns          | Shared secret for `POST /api/internal/campaigns/tick`. If unset, that endpoint returns 404 |
@@ -688,9 +688,10 @@ npm run build
 
 ## Verification performed in this environment
 
-- **Full test suite: 212 tests passing across 33 files** (161 before this
-  change, plus 51 new ones), exit code 0. Run with
-  `npx vitest run --maxWorkers=2 --minWorkers=1`.
+- **Full test suite: 221 tests passing across 34 files**, exit code 0, via
+  `npm test` with no extra flags. The forks pool is capped at two workers
+  (`maxWorkers`/`minWorkers` in `vitest.config.ts`) so the suite stays
+  within memory on constrained machines.
 - `npm run typecheck` (`next typegen && tsc --noEmit`): **passes, zero
   errors**, no `any`/`@ts-ignore`/`@ts-expect-error` anywhere in the code.
 - `npm run build` (`next build`): **succeeds**. The route table now includes

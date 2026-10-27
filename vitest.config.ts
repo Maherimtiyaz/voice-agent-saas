@@ -22,5 +22,12 @@ export default defineConfig({
     // healthy and removes the flake when it is not.
     testTimeout: 60_000,
     hookTimeout: 120_000,
+    // Limit concurrent test files to avoid OOM on memory-constrained
+    // machines. Vitest 2 defaults to the `forks` pool, so cap workers at
+    // the top level rather than via `poolOptions.threads` (which only
+    // applies when `pool: "threads"` is selected and is otherwise
+    // silently ignored).
+    maxWorkers: 2,
+    minWorkers: 1,
   },
 });
