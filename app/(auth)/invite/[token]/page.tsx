@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AcceptInvitationForm } from "@/app/(dashboard)/settings/accept-invitation-form";
 import { getCurrentUser } from "@/server/auth/current-user";
@@ -21,9 +22,8 @@ export default async function InvitationPage({
   ]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <div className="w-full max-w-md">
-        <Card>
+    <AuthShell contentClassName="max-w-md">
+      <Card>
           <CardHeader>
             <CardTitle>{invite ? `Join ${invite.organizationName}` : "Invitation unavailable"}</CardTitle>
             <CardDescription>
@@ -69,8 +69,7 @@ export default async function InvitationPage({
               </p>
             </div>
           )}
-        </Card>
-      </div>
-    </div>
+      </Card>
+    </AuthShell>
   );
 }
