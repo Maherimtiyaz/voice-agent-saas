@@ -1,4 +1,5 @@
 import { db } from "@/db";
+import { BRAND } from "@/lib/brand";
 import {
   isAdminAuthConfigured,
   verifyAdminCredentials,
@@ -28,7 +29,7 @@ export async function GET(request: Request): Promise<Response> {
     return new Response("Authentication required.", {
       status: 401,
       headers: {
-        "WWW-Authenticate": 'Basic realm="Voice Agent Platform"',
+        "WWW-Authenticate": `Basic realm="${BRAND.name}"`,
       },
     });
   }

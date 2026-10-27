@@ -9,9 +9,9 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary: "bg-accent text-accent-foreground hover:bg-accent/90",
-  secondary: "bg-surface text-foreground border border-border hover:bg-black/[0.02]",
-  ghost: "text-foreground hover:bg-black/[0.04]",
-  danger: "bg-danger text-white hover:bg-danger/90",
+  secondary: "bg-surface text-foreground border border-border hover:bg-foreground/[0.03]",
+  ghost: "text-foreground hover:bg-foreground/[0.06]",
+  danger: "bg-danger text-white hover:bg-danger/90 dark:text-red-950",
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
