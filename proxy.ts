@@ -2,7 +2,15 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { decryptSession, SESSION_COOKIE_NAME } from "@/lib/session";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/agents", "/settings", "/phone-numbers", "/calls", "/analytics"];
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/agents",
+  "/campaigns",
+  "/settings",
+  "/phone-numbers",
+  "/calls",
+  "/analytics",
+];
 const AUTH_ROUTES = ["/login", "/register"];
 
 /**
@@ -19,7 +27,9 @@ export default async function proxy(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   const session = await decryptSession(token);
 
-  const isProtected = PROTECTED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  const isProtected = PROTECTED_PREFIXES.some((prefix) =>
+    pathname.startsWith(prefix),
+  );
   const isAuthRoute = AUTH_ROUTES.some((prefix) => pathname.startsWith(prefix));
 
   if (isProtected && !session) {
