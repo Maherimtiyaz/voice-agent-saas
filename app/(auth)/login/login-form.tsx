@@ -18,12 +18,24 @@ function SubmitButton() {
   );
 }
 
-export function LoginForm({ nextPath }: { nextPath?: string }) {
+export function LoginForm({
+  nextPath,
+  notice,
+}: {
+  nextPath?: string;
+  notice?: string;
+}) {
   const [state, formAction] = useActionState(loginAction, undefined);
 
   return (
     <form action={formAction} className="flex flex-col gap-4" noValidate>
       {nextPath && <input type="hidden" name="next" value={nextPath} />}
+
+      {notice && (
+        <p role="status" className="text-sm text-muted">
+          {notice}
+        </p>
+      )}
       <div>
         <Label htmlFor="email">Email</Label>
         <Input id="email" name="email" type="email" autoComplete="email" required />
@@ -31,7 +43,15 @@ export function LoginForm({ nextPath }: { nextPath?: string }) {
       </div>
 
       <div>
-        <Label htmlFor="password">Password</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="password">Password</Label>
+          <Link
+            href="/forgot-password"
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <Input
           id="password"
           name="password"

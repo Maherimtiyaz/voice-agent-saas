@@ -10,6 +10,8 @@ import { RegisterInviteForm } from "./register-invite-form";
 
 export const metadata: Metadata = {
   title: "Join a workspace",
+  // Invitation URLs contain a bearer token; never index them.
+  robots: { index: false, follow: false },
 };
 
 export default async function InvitationPage({

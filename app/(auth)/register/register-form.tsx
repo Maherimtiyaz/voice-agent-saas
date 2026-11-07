@@ -52,7 +52,7 @@ export function RegisterForm() {
         />
         <FieldError messages={state?.errors?.password} />
         <p className="mt-1 text-xs text-muted">
-          At least 8 characters, with a letter and a number.
+          8–72 characters, with a letter and a number.
         </p>
       </div>
 

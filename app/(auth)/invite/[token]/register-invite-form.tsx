@@ -44,7 +44,7 @@ export function RegisterInviteForm({ token }: { token: string }) {
         />
         <FieldError messages={state?.errors?.password} />
         <p className="mt-1 text-xs text-muted">
-          At least 8 characters, with a letter and a number.
+          8–72 characters, with a letter and a number.
         </p>
       </div>
       {state?.errors?.token && <p role="alert" className="text-sm text-danger">{state.errors.token[0]}</p>}
