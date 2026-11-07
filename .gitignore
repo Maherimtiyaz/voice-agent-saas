@@ -12,7 +12,6 @@
 
 #cross-env
 .env
-.env.example
 node_modules/
 .next/
 .env
@@ -23,10 +22,6 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
-
-.env.example
-package-lock.json
-
 
 # testing
 /coverage
@@ -50,6 +45,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template, which is committed so a fresh clone has one.
+!.env.example
 
 # vercel
 .vercel

@@ -1,0 +1,30 @@
+# Files and directories that must never be uploaded to Vercel.
+#
+# Vercel already honours .gitignore, but local backups, build output, and
+# editor artifacts can exist outside git and still be picked up by a manual
+# `vercel deploy`. This is the belt-and-braces list.
+
+node_modules
+.next
+out
+build
+dist
+coverage
+
+# Never upload real environment files. .env.example is safe and useful.
+.env
+.env.*
+!.env.example
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+.playwright-mcp
+.tsbuildinfo
+*.tsbuildinfo
+
+.DS_Store
+Thumbs.db
