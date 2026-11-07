@@ -326,8 +326,8 @@ cp .env.example .env
 | `EMAIL_API_KEY`        | email              | Transactional email provider API key. When set (with `EMAIL_FROM`), invitation links are emailed automatically |
 | `EMAIL_FROM`           | email              | Sender address, e.g. `SageLine <hello@your-domain.com>` |
 | `EMAIL_API_URL`        | email              | Optional. Provider base URL. Defaults to `https://api.resend.com` |
-| `EMAIL_CRON_SECRET`    | email              | Shared secret for `POST /api/internal/email/outbox`. If unset, that endpoint returns 404 |
-| `CAMPAIGN_CRON_SECRET` | campaigns          | Shared secret for `POST /api/internal/campaigns/tick`. If unset, that endpoint returns 404 |
+| `EMAIL_CRON_SECRET`    | email              | Shared secret for `GET`/`POST /api/internal/email/outbox`. If unset, that endpoint returns 404 |
+| `CAMPAIGN_CRON_SECRET` | campaigns          | Shared secret for `GET`/`POST /api/internal/campaigns/tick`. If unset, that endpoint returns 404 |
 | `ADMIN_USERNAME`       | admin              | HTTP Basic auth username for `/api/admin/demo-requests`. If unset, that endpoint returns 404 |
 | `ADMIN_PASSWORD`       | admin              | HTTP Basic auth password for `/api/admin/demo-requests` |
 
@@ -620,11 +620,12 @@ the UI.
 - **Each tick places at most one call per campaign**, so one campaign
   cannot consume the whole run.
 
-Point a scheduler at `POST /api/internal/campaigns/tick` with
-`Authorization: Bearer $CAMPAIGN_CRON_SECRET`. If the variable is unset the
-endpoint returns `404`. The UI still offers a manual "Call next contact",
-which uses the same claim path and therefore respects the same schedule and
-pacing.
+Point a scheduler at `GET` or `POST /api/internal/campaigns/tick` with
+`Authorization: Bearer $CAMPAIGN_CRON_SECRET`. Both verbs are accepted so
+Vercel Cron (which sends `GET`) and external schedulers (which are easier to
+point at `POST`) can drive it. If the variable is unset the endpoint returns
+`404`. The UI still offers a manual "Call next contact", which uses the same
+claim path and therefore respects the same schedule and pacing.
 
 ### 13. Run tests
 
@@ -642,6 +643,131 @@ responses and signature fixtures.
 npm run typecheck   # next typegen && tsc --noEmit
 npm run build
 ```
+
+## Deploying to production
+
+Vercel is the tested target, but nothing here is Vercel-specific except the
+`vercel.json` cron declarations. The shape is the same anywhere: a Node
+process running `next start` plus a managed Postgres database.
+
+### 1. Database
+
+Use managed Postgres (Neon, Supabase, RDS). This is not optional
+infrastructure — rate limiting, the campaign scheduler, the email outbox, and
+webhook deduplication all live in the database, so a platform without durable
+storage cannot run this app.
+
+- **Use the pooled connection string.** On serverless, every function
+  instance creates its own `postgres.js` client; against a direct connection
+  string, a burst of traffic exhausts the server's connection limit. Neon
+  labels this "Pooled connection"; Supabase exposes a pooler on port `6543`.
+- Keep `sslmode=require` in the URL.
+- If the pooler runs in **transaction mode** (Supabase's `6543` does),
+  `postgres.js`'s default prepared statements will fail. Set `prepare: false`
+  in the `postgres(...)` options in `db/index.ts` for those hosts.
+- Apply migrations once per release, against the production URL, before the
+  new code receives traffic:
+
+  ```bash
+  DATABASE_URL="postgres://…pooled…" npm run db:migrate
+  ```
+
+  `drizzle-kit migrate` tracks applied migrations and skips them, so running
+  it on every deploy is safe.
+
+### 2. Environment variables
+
+At minimum a production deployment needs these. Everything else in the table
+in [§2 Configure environment variables](#2-configure-environment-variables)
+is optional and only enables the corresponding integration.
+
+| Variable | Why it is required |
+|---|---|
+| `DATABASE_URL` | Postgres, pooled |
+| `SESSION_SECRET` | Signs session JWTs; generate with `openssl rand -base64 32`. Rotating it signs everyone out |
+| `NODE_ENV=production` | Enables the `secure` session cookie flag |
+| `APP_URL` | `https://your-domain.com` — no trailing slash. Twilio signatures are verified against the URL reconstructed from this value, so a mismatch rejects every inbound call |
+| `CRON_SECRET` | The scheduler's shared secret (see below) |
+| `CAMPAIGN_CRON_SECRET` | Same value as `CRON_SECRET` |
+| `EMAIL_CRON_SECRET` | Same value as `CRON_SECRET` |
+
+`.env` is not committed (`.env*` is ignored), so set these in the host's
+dashboard, not in the repository.
+
+### 3. Build and start
+
+```bash
+npm ci
+npm run build
+npm start            # next start, default port 3000
+```
+
+On Vercel: import the repository, add the environment variables, and deploy.
+No build override is needed.
+
+### 4. Scheduled jobs
+
+Two jobs must run on a schedule or the product quietly stops working: without
+the tick, scheduled campaigns never dial; without the drain, queued email
+never sends.
+
+`vercel.json` declares both at one-minute intervals:
+
+```json
+{ "path": "/api/internal/campaigns/tick", "schedule": "* * * * *" },
+{ "path": "/api/internal/email/outbox",  "schedule": "* * * * *" }
+```
+
+- Vercel Cron always sends a **`GET`**, and adds
+  `Authorization: Bearer $CRON_SECRET` automatically when that variable is
+  set. Both routes accept `GET` and `POST`.
+- **Per-minute crons require a paid plan.** The Hobby tier allows only daily
+  runs, which is too coarse for call pacing. On Hobby, either drop to an
+  hourly schedule and accept that campaigns dial slowly, or use an external
+  scheduler.
+- Any external scheduler works if it can send an authenticated request.
+  cron-job.org and GitHub Actions are both fine — point them at the same
+  paths with `Authorization: Bearer $CAMPAIGN_CRON_SECRET` /
+  `$EMAIL_CRON_SECRET` and use `POST`.
+
+If the secret variables are unset the routes return `404`, so an
+unconfigured deployment has no unauthenticated trigger.
+
+### 5. Provider webhook URLs
+
+These need the final HTTPS domain, so configure them **after** the first
+deploy and before sending traffic to a number:
+
+| Provider | Setting | URL |
+|---|---|---|
+| Twilio | Phone number → Voice → "A call comes in" (HTTP POST) | `https://your-domain.com/api/voice/twilio/inbound` |
+| Vapi | Server URL, with an `X-Vapi-Secret` custom credential | `https://your-domain.com/api/voice/vapi/events` |
+
+The handoff webhooks (`/api/voice/twilio/handoff/status` and `/whisper`) are
+generated by the app as TwiML callback URLs; they need no console
+configuration.
+
+If you run the optional custom-voice service, `MEDIA_STREAMS_URL` must be a
+public `wss://` origin on a host that supports long-lived WebSocket
+connections — that service cannot run on Vercel functions.
+
+### 6. Health check
+
+`GET /api/health` returns `200` with `{"status":"ok"}` when Postgres is
+reachable and `503` when it is not. Point the host's health check or an
+uptime monitor at it. The body intentionally exposes no configuration or
+error detail.
+
+### 7. Post-deploy checklist
+
+1. `GET /api/health` returns `200`.
+2. `GET /` renders and the demo form submits.
+3. `GET /api/v1/agents` without a key returns `401`.
+4. `GET /api/internal/campaigns/tick` without a token returns `401`.
+5. A real inbound call to the Twilio number reaches the agent and appears
+   under Calls.
+6. A test campaign fires at its scheduled time.
+7. An invitation email arrives (if `EMAIL_API_KEY` and `EMAIL_FROM` are set).
 
 ## What has NOT been implemented yet
 
