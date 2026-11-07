@@ -9,6 +9,12 @@ export interface SessionPayload {
   userId: string;
   /** The organization the user is currently acting within. */
   activeOrganizationId: string;
+  /**
+   * The `users.session_version` value this session was issued against.
+   * Bumped on password reset / sign-out-everywhere, which invalidates
+   * every previously issued token without a server-side session store.
+   */
+  sessionVersion: number;
   [key: string]: unknown;
 }
 
@@ -17,6 +23,15 @@ function getEncodedSecret(): Uint8Array {
   if (!secret) {
     throw new Error(
       "SESSION_SECRET is not set. Copy .env.example to .env and fill it in.",
+    );
+  }
+  // HS256 with a short key is brute-forceable offline from a single
+  // captured cookie. Fail closed in production rather than run with a
+  // weak secret. (Tests use short placeholders and run with
+  // NODE_ENV=test, so they are unaffected.)
+  if (process.env.NODE_ENV === "production" && secret.length < 32) {
+    throw new Error(
+      "SESSION_SECRET must be at least 32 characters in production. Generate one with: openssl rand -base64 32",
     );
   }
   return new TextEncoder().encode(secret);
@@ -41,7 +56,13 @@ export async function decryptSession(
     if (typeof payload.userId !== "string" || typeof payload.activeOrganizationId !== "string") {
       return null;
     }
-    return payload as SessionPayload;
+    // Tokens issued before session versioning shipped have no claim. Treat
+    // them as version 0, matching the column default, so deploying this
+    // does not sign every existing user out.
+    const sessionVersion =
+      typeof payload.sessionVersion === "number" ? payload.sessionVersion : 0;
+
+    return { ...payload, sessionVersion } as SessionPayload;
   } catch {
     // Expired, tampered, or malformed token: treat as "no session"
     // rather than surfacing a decode error to the caller.

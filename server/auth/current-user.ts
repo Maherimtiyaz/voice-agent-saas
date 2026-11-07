@@ -15,6 +15,8 @@ export interface CurrentUser {
   id: string;
   email: string;
   name: string;
+  /** Current `users.session_version`; the session must match it. */
+  sessionVersion: number;
 }
 
 /**
@@ -33,12 +35,24 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (!session) return null;
 
   const [user] = await db
-    .select({ id: users.id, email: users.email, name: users.name })
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      sessionVersion: users.sessionVersion,
+    })
     .from(users)
     .where(eq(users.id, session.userId))
     .limit(1);
 
-  return user ?? null;
+  if (!user) return null;
+
+  // A token whose version is behind the row was issued before a password
+  // reset or "sign out everywhere". Refusing it is what makes revocation
+  // work without a session table.
+  if (user.sessionVersion !== session.sessionVersion) return null;
+
+  return user;
 });
 
 /** Same session read, without the DB round-trip — for the active org id only. */

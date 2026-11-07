@@ -58,6 +58,14 @@ export class InvalidInvitationError extends AppError {
   }
 }
 
+export class InvalidPasswordResetError extends AppError {
+  constructor() {
+    super(
+      "This password reset link is invalid or has expired. Request a new one.",
+    );
+  }
+}
+
 export class InvitationEmailMismatchError extends AppError {
   constructor() {
     super("Sign in with the email address this invitation was sent to.");

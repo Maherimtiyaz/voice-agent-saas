@@ -18,6 +18,7 @@ import { listApiKeys } from "@/server/services/api-key.service";
 import { ApiKeyManagement } from "./api-key-management";
 import { OrganizationInviteManagement } from "./organization-invite-management";
 import { listPendingOrganizationInvites } from "@/server/services/organization-invite.service";
+import { SignOutEverywhere } from "./sign-out-everywhere";
 
 export const metadata: Metadata = {
   title: "Settings",
@@ -122,6 +123,18 @@ export default async function SettingsPage({
             })}
           </dd>
         </dl>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Security</CardTitle>
+          <CardDescription>
+            Signing out everywhere revokes every active session for your
+            account, including this browser and any device you no longer
+            control. You will need to sign in again.
+          </CardDescription>
+        </CardHeader>
+        <SignOutEverywhere />
       </Card>
 
       {canManageIntegrations && (

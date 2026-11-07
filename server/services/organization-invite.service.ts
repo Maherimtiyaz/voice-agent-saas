@@ -321,7 +321,10 @@ export async function registerAndAcceptOrganizationInvite(
     name: string;
     password: string;
   },
-): Promise<{ user: { id: string; email: string; name: string }; organizationId: string }> {
+): Promise<{
+  user: { id: string; email: string; name: string; sessionVersion: number };
+  organizationId: string;
+}> {
   const tokenHash = hashInviteToken(params.token);
   const passwordHash = await hashPassword(params.password);
 
@@ -351,7 +354,12 @@ export async function registerAndAcceptOrganizationInvite(
       const [user] = await tx
         .insert(users)
         .values({ email: invite.email, name: params.name.trim(), passwordHash })
-        .returning({ id: users.id, email: users.email, name: users.name });
+        .returning({
+          id: users.id,
+          email: users.email,
+          name: users.name,
+          sessionVersion: users.sessionVersion,
+        });
 
       const [accepted] = await tx
         .update(organizationInvites)

@@ -202,6 +202,14 @@ export const users = pgTable("users", {
   email: text("email").notNull(),
   passwordHash: text("password_hash").notNull(),
   name: text("name").notNull(),
+  /**
+   * Incremented whenever every existing session for this user must stop
+   * being valid (password reset, "sign out everywhere"). Session JWTs
+   * carry the value they were issued with; `getCurrentUser` rejects a
+   * token whose version no longer matches. Without this, a stateless
+   * 7-day JWT could not be revoked after a compromise.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -210,6 +218,32 @@ export const users = pgTable("users", {
     .defaultNow(),
 }, (table) => ({
   emailUnique: uniqueIndex("users_email_unique").on(table.email),
+}));
+
+/**
+ * Single-use password-reset tokens.
+ *
+ * Only the SHA-256 hash of the token is stored, exactly like invitation
+ * tokens: a database leak must not hand an attacker working reset links.
+ * A reset bumps `users.sessionVersion`, so every session issued before the
+ * reset is invalidated.
+ */
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex("password_reset_tokens_token_hash_unique").on(
+    table.tokenHash,
+  ),
+  userIdx: index("password_reset_tokens_user_id_idx").on(table.userId),
 }));
 
 export const organizationMembers = pgTable("organization_members", {

@@ -125,7 +125,11 @@ export async function acceptOrganizationInviteAction(
       userId: user.id,
       userEmail: user.email,
     });
-    await createSessionCookie({ userId: user.id, activeOrganizationId: organizationId });
+    await createSessionCookie({
+      userId: user.id,
+      activeOrganizationId: organizationId,
+      sessionVersion: user.sessionVersion,
+    });
     redirect("/dashboard");
   } catch (error) {
     if (error instanceof AppError) return { message: error.message };
@@ -151,6 +155,7 @@ export async function registerAndAcceptOrganizationInviteAction(
     await createSessionCookie({
       userId: accepted.user.id,
       activeOrganizationId: accepted.organizationId,
+      sessionVersion: accepted.user.sessionVersion,
     });
     redirect("/dashboard");
   } catch (error) {

@@ -41,6 +41,8 @@ export type RateLimitBucket =
   | "public_api"
   | "auth_register"
   | "auth_login"
+  | "auth_password_reset"
+  | "admin_auth"
   | "demo_request";
 
 export interface RateLimitResult {
@@ -63,6 +65,14 @@ export const RATE_LIMITS: Record<RateLimitBucket, { limit: number; windowSeconds
   auth_register: { limit: 5, windowSeconds: 3600 },
   // Sign-in attempts: 10 per 15 minutes per email address.
   auth_login: { limit: 10, windowSeconds: 900 },
+  // Password-reset requests: 5 per hour per email address. Also applied
+  // per IP by the action so one machine cannot spray requests.
+  auth_password_reset: { limit: 5, windowSeconds: 3600 },
+  // Platform-admin Basic auth: 10 FAILED attempts per 15 minutes per IP.
+  // Successful requests do not consume the budget, so refreshing the inbox
+  // is not penalized; Basic auth has no lockout of its own, so this is the
+  // brute-force ceiling.
+  admin_auth: { limit: 10, windowSeconds: 900 },
   // Public landing-page form: 5 per hour per IP. The form is
   // unauthenticated, so this is the only thing standing between it
   // and being used to generate spam leads.
@@ -86,6 +96,9 @@ export const RATE_LIMIT_OVERRIDES: Partial<
   },
   auth_login: {
     ip: { limit: 60 },
+  },
+  auth_password_reset: {
+    ip: { limit: 20 },
   },
 };
 

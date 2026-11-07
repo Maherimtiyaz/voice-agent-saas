@@ -6,24 +6,44 @@ beforeAll(() => {
   process.env.SESSION_SECRET = "test-secret-do-not-use-in-production";
 });
 
+const BASE_PAYLOAD = {
+  userId: "user-1",
+  activeOrganizationId: "org-1",
+  sessionVersion: 3,
+};
+
 describe("session tokens", () => {
   it("round-trips a payload through encrypt/decrypt", async () => {
     const { encryptSession, decryptSession } = await import("@/lib/session");
-    const token = await encryptSession({
-      userId: "user-1",
-      activeOrganizationId: "org-1",
-    });
+    const token = await encryptSession(BASE_PAYLOAD);
 
     const payload = await decryptSession(token);
-    expect(payload).toMatchObject({ userId: "user-1", activeOrganizationId: "org-1" });
+    expect(payload).toMatchObject(BASE_PAYLOAD);
+  });
+
+  it("treats a legacy token without a session version as version 0", async () => {
+    const { SignJWT } = await import("jose");
+    const { decryptSession } = await import("@/lib/session");
+
+    const token = await new SignJWT({
+      userId: "user-1",
+      activeOrganizationId: "org-1",
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("7d")
+      .sign(new TextEncoder().encode(process.env.SESSION_SECRET));
+
+    await expect(decryptSession(token)).resolves.toMatchObject({
+      userId: "user-1",
+      activeOrganizationId: "org-1",
+      sessionVersion: 0,
+    });
   });
 
   it("rejects a tampered token", async () => {
     const { encryptSession, decryptSession } = await import("@/lib/session");
-    const token = await encryptSession({
-      userId: "user-1",
-      activeOrganizationId: "org-1",
-    });
+    const token = await encryptSession(BASE_PAYLOAD);
 
     const tampered = `${token.slice(0, -4)}abcd`;
     const payload = await decryptSession(tampered);
@@ -32,10 +52,7 @@ describe("session tokens", () => {
 
   it("rejects a token signed with a different secret", async () => {
     const { encryptSession } = await import("@/lib/session");
-    const token = await encryptSession({
-      userId: "user-1",
-      activeOrganizationId: "org-1",
-    });
+    const token = await encryptSession(BASE_PAYLOAD);
 
     process.env.SESSION_SECRET = "a-completely-different-secret";
     const { decryptSession } = await import("@/lib/session");

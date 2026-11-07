@@ -64,10 +64,24 @@ const SCHEMA_SQL = `
     email text not null,
     password_hash text not null,
     name text not null,
+    session_version integer not null default 0,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   );
   create unique index users_email_unique on users (email);
+
+  create table password_reset_tokens (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references users (id) on delete cascade,
+    token_hash text not null,
+    expires_at timestamptz not null,
+    used_at timestamptz,
+    created_at timestamptz not null default now()
+  );
+  create unique index password_reset_tokens_token_hash_unique
+    on password_reset_tokens (token_hash);
+  create index password_reset_tokens_user_id_idx
+    on password_reset_tokens (user_id);
 
   create table organization_members (
     id uuid primary key default gen_random_uuid(),

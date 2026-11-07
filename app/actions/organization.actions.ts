@@ -20,6 +20,10 @@ export async function switchOrganizationAction(formData: FormData): Promise<void
   const user = await requireCurrentUser();
   await requireMembership(db, { organizationId, userId: user.id });
 
-  await createSessionCookie({ userId: user.id, activeOrganizationId: organizationId });
+  await createSessionCookie({
+    userId: user.id,
+    activeOrganizationId: organizationId,
+    sessionVersion: user.sessionVersion,
+  });
   redirect("/dashboard");
 }
