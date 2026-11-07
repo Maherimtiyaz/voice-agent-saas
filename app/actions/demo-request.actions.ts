@@ -2,7 +2,10 @@
 
 import { headers } from "next/headers";
 import { db } from "@/db";
+import type { DemoRequest } from "@/db/schema";
+import { getClientIp } from "@/lib/client-ip";
 import { AppError } from "@/server/errors";
+import { isEmailConfigured, sendEmail } from "@/server/integrations/email/client";
 import { createDemoRequest } from "@/server/services/demo-request.service";
 import { consumeRateLimit } from "@/server/services/rate-limit.service";
 import { demoRequestSchema } from "@/server/validation/demo-request";
@@ -14,26 +17,53 @@ export interface DemoRequestActionState {
   success?: boolean;
 }
 
-/**
- * The best-effort client IP.
- *
- * `x-forwarded-for` is the first entry in the chain of proxies that
- * forwarded the request. On Vercel (and most other hosts) this is
- * set by the platform, not by the client, but a client CAN send its
- * own `x-forwarded-for` header and some hosts append to it rather
- * than replace it — so the LAST entry is the one the platform added
- * and is the least spoofable. We use it only to rate limit, never to
- * identify or contact anyone, so a spoofed value can at worst let one
- * caller reset their own limit.
- */
 async function clientIp(): Promise<string> {
-  const headerList = await headers();
-  const forwarded = headerList.get("x-forwarded-for");
-  if (forwarded) {
-    const parts = forwarded.split(",").map((part) => part.trim()).filter(Boolean);
-    if (parts.length > 0) return parts[parts.length - 1];
-  }
-  return headerList.get("x-real-ip") ?? "unknown";
+  return getClientIp(await headers());
+}
+
+/**
+ * Emails the team when a lead arrives.
+ *
+ * Deliberately best-effort and outside the request's success path: a
+ * lead that is stored is a success even if the notification fails. It
+ * sends directly rather than through the outbox because
+ * `email_outbox.organization_id` is NOT NULL and a demo request has no
+ * organization — queuing it would mean inventing a tenant.
+ *
+ * Silently does nothing when `DEMO_NOTIFICATION_EMAIL` or the email
+ * provider is unset, which is the correct behaviour for local dev.
+ */
+async function notifyNewLead(lead: DemoRequest): Promise<void> {
+  const to = process.env.DEMO_NOTIFICATION_EMAIL?.trim();
+  if (!to || !isEmailConfigured()) return;
+
+  const appUrl = process.env.APP_URL?.trim().replace(/\/$/, "");
+  const inbox = appUrl ? `${appUrl}/api/admin/demo-requests` : null;
+
+  const lines = [
+    `${lead.name} just requested a demo.`,
+    "",
+    `Name:        ${lead.name}`,
+    `Email:       ${lead.email}`,
+    `Company:     ${lead.company ?? "—"}`,
+    `Phone:       ${lead.phone ?? "—"}`,
+    `Use case:    ${lead.useCase ?? "—"}`,
+    `Call volume: ${lead.callVolume ?? "—"}`,
+    "",
+    "Message:",
+    lead.message ?? "—",
+    "",
+    `Received: ${lead.updatedAt.toISOString()}`,
+    inbox ? `Lead inbox: ${inbox}` : null,
+    "",
+    "Reply from your normal mailbox — this address only sends.",
+  ].filter((line) => line !== null);
+
+  await sendEmail({
+    to,
+    subject: `New demo request: ${lead.name}${lead.company ? ` (${lead.company})` : ""}`,
+    body: lines.join("\n"),
+  });
 }
 
 export async function submitDemoRequestAction(
@@ -76,7 +106,16 @@ export async function submitDemoRequestAction(
   }
 
   try {
-    await createDemoRequest(db, parsed.data);
+    const lead = await createDemoRequest(db, parsed.data);
+
+    try {
+      await notifyNewLead(lead);
+    } catch (error) {
+      // The lead is already saved; a failed notification must never turn
+      // into a failed form submission. Log it so it is visible in ops.
+      console.error("[demo-request] lead notification failed:", error);
+    }
+
     return { success: true };
   } catch (error) {
     if (error instanceof AppError) {
