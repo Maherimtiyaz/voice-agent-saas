@@ -3,6 +3,7 @@ import type { Agent } from "@/db/schema";
 import { vapiRequest } from "@/server/integrations/vapi/client";
 import { buildVapiToolDefinitions, type VapiFunctionDefinition } from "@/server/tools/registry";
 import { ensureToolsRegistered } from "@/server/tools/definitions";
+import { RECORDING_DISCLOSURE } from "@/server/voice-prompts";
 
 interface VapiVoiceConfig {
   provider: string;
@@ -66,9 +67,15 @@ export function buildAssistantPayload(
       messages: [
         {
           role: "system",
-          content: hasKnowledgeTool
-            ? `${basePrompt}\n\nUse the knowledge base query tool to answer relevant questions about the company. If the documents do not contain the answer, say you don't know rather than guessing.`
-            : basePrompt,
+          content: [
+            basePrompt,
+            RECORDING_DISCLOSURE,
+            hasKnowledgeTool
+              ? "Use the knowledge base query tool to answer relevant questions about the company. If the documents do not contain the answer, say you don't know rather than guessing."
+              : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
       ],
       tools: buildVapiToolDefinitions(),

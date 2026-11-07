@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildAssistantPayload } from "@/server/integrations/vapi/assistant";
+import { RECORDING_DISCLOSURE } from "@/server/voice-prompts";
 import type { Agent } from "@/db/schema";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
@@ -28,7 +29,7 @@ describe("buildAssistantPayload", () => {
     const payload = buildAssistantPayload(agent, "https://example.com/api/voice/vapi/events");
     expect(payload.model.messages[0]).toEqual({
       role: "system",
-      content: "You help customers book appointments.",
+      content: `You help customers book appointments.\n\n${RECORDING_DISCLOSURE}`,
     });
   });
 

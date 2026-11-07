@@ -2,6 +2,7 @@ import * as z from "zod";
 import type { Agent } from "@/db/schema";
 import { ensureToolsRegistered } from "@/server/tools/definitions";
 import { listTools } from "@/server/tools/registry";
+import { RECORDING_DISCLOSURE } from "@/server/voice-prompts";
 
 const DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1";
 const DEFAULT_REALTIME_VOICE = "marin";
@@ -59,6 +60,7 @@ export function buildRealtimeSessionUpdate(agent: Pick<
   const instructions = [
     agent.systemPrompt?.trim() ||
       `You are ${agent.name}, a helpful phone assistant.`,
+    RECORDING_DISCLOSURE,
     "You are speaking on a live phone call. Keep responses natural, clear, and concise.",
     "At the beginning of the call, greet the caller briefly and ask how you can help.",
     "Use the available functions to perform actions. Never claim an action succeeded unless its function result confirms success.",
