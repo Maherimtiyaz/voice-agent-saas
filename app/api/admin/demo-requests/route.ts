@@ -1,10 +1,13 @@
 import { db } from "@/db";
 import { BRAND } from "@/lib/brand";
+import { getClientIp } from "@/lib/client-ip";
 import {
   isAdminAuthConfigured,
   verifyAdminCredentials,
 } from "@/server/admin/auth";
+import { adminAllowedIps, isIpAllowed } from "@/server/admin/network";
 import { listDemoRequests } from "@/server/services/demo-request.service";
+import { consumeRateLimit } from "@/server/services/rate-limit.service";
 
 /**
  * The landing-page lead inbox.
@@ -18,14 +21,46 @@ import { listDemoRequests } from "@/server/services/demo-request.service";
  * The route returns 404 when admin credentials are not configured, so
  * a deployment without them has no lead inbox rather than an open
  * one.
+ *
+ * Defence in depth on top of Basic auth:
+ *   - an optional IP allowlist (`ADMIN_ALLOWED_IPS`) fails closed;
+ *   - FAILED credential attempts are rate-limited per IP;
+ *   - every access decision is written as a structured audit line.
  */
 export async function GET(request: Request): Promise<Response> {
   if (!isAdminAuthConfigured()) {
     return new Response("Not found.", { status: 404 });
   }
 
+  const ip = getClientIp(request.headers);
+
+  // An allowlist that is configured but does not include this address is
+  // indistinguishable from "this route does not exist", so an attacker
+  // cannot map the admin surface.
+  const allowedIps = adminAllowedIps();
+  if (allowedIps.length > 0 && !isIpAllowed(ip, allowedIps)) {
+    audit("ip_denied", ip);
+    return new Response("Not found.", { status: 404 });
+  }
+
   const credentials = verifyAdminCredentials(request.headers.get("authorization"));
   if (credentials !== true) {
+    // Only failures consume the budget: a legitimate admin refreshing the
+    // inbox is never locked out, while password guessing hits a hard
+    // ceiling.
+    const limit = await consumeRateLimit(db, {
+      bucket: "admin_auth",
+      key: ip,
+    });
+    if (!limit.allowed) {
+      audit("rate_limited", ip);
+      return new Response("Too many attempts. Try again later.", {
+        status: 429,
+        headers: { "Retry-After": String(limit.retryAfterSeconds) },
+      });
+    }
+
+    audit("unauthorized", ip);
     return new Response("Authentication required.", {
       status: 401,
       headers: {
@@ -34,6 +69,7 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
+  audit("granted", ip);
   const demoRequests = await listDemoRequests(db, { limit: 200 });
 
   return new Response(renderDemoRequests(demoRequests), {
@@ -42,6 +78,23 @@ export async function GET(request: Request): Promise<Response> {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function audit(
+  result: "granted" | "unauthorized" | "rate_limited" | "ip_denied",
+  ip: string,
+): void {
+  // Structured and PII-free: no credentials, lead data, or headers. This is
+  // the record an incident responder needs to answer "who opened the lead
+  // inbox, from where, and was it refused?".
+  console.info(
+    JSON.stringify({
+      scope: "admin.demo_requests",
+      result,
+      ip,
+      at: new Date().toISOString(),
+    }),
+  );
 }
 
 function escapeHtml(value: string): string {

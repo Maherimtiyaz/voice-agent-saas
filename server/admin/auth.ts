@@ -1,5 +1,5 @@
 import "server-only";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 /**
  * HTTP Basic auth for the platform-admin surfaces (currently: the
@@ -12,25 +12,30 @@ import { timingSafeEqual } from "node:crypto";
  * against a configured username and password.
  *
  * If `ADMIN_USERNAME` / `ADMIN_PASSWORD` are not configured, the
- * surface is disabled entirely (see `isAdminAuthConfigured`).
+ * surface is disabled entirely (see `isAdminAuthConfigured`). A password
+ * shorter than `ADMIN_PASSWORD_MIN_LENGTH` also disables it: Basic auth has
+ * no lockout of its own, so a weak shared password is a brute-force target
+ * even with the per-IP rate limit the route applies.
  */
 
+export const ADMIN_PASSWORD_MIN_LENGTH = 24;
+
 function safeCompare(a: string, b: string): boolean {
-  const aBytes = Buffer.from(a, "utf8");
-  const bBytes = Buffer.from(b, "utf8");
-  // timingSafeEqual throws if the buffers have different lengths, so
-  // compare the lengths first and hash both sides to a fixed length
-  // so the comparison itself is constant-time.
-  if (aBytes.length !== bBytes.length) {
-    return false;
-  }
-  return timingSafeEqual(aBytes, bBytes);
+  // Hash both sides to a fixed-length digest before comparing. Passing
+  // the raw buffers would force a length check first, and an early
+  // return on length leaks how long the configured credential is.
+  const aDigest = createHash("sha256").update(a, "utf8").digest();
+  const bDigest = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(aDigest, bDigest);
 }
 
 export function isAdminAuthConfigured(): boolean {
+  const username = process.env.ADMIN_USERNAME?.trim();
+  const password = process.env.ADMIN_PASSWORD?.trim();
   return Boolean(
-    process.env.ADMIN_USERNAME?.trim() &&
-      process.env.ADMIN_PASSWORD?.trim(),
+    username &&
+      password &&
+      password.length >= ADMIN_PASSWORD_MIN_LENGTH,
   );
 }
 
@@ -64,7 +69,13 @@ export function verifyAdminCredentials(
 
   const expectedUsername = process.env.ADMIN_USERNAME?.trim();
   const expectedPassword = process.env.ADMIN_PASSWORD?.trim();
-  if (!expectedUsername || !expectedPassword) return null;
+  if (
+    !expectedUsername ||
+    !expectedPassword ||
+    expectedPassword.length < ADMIN_PASSWORD_MIN_LENGTH
+  ) {
+    return null;
+  }
 
   return (
     safeCompare(username, expectedUsername) &&
