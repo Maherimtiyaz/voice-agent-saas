@@ -14,8 +14,20 @@ import { drainEmailOutbox } from "@/server/services/email-outbox.service";
  * The route is idempotent: it only sends rows that are still
  * `pending`, and each row is marked `sent` as soon as the provider
  * accepts it.
+ *
+ * Both verbs share one handler. Vercel Cron always issues a `GET` with
+ * `Authorization: Bearer $CRON_SECRET`, while most external schedulers
+ * (cron-job.org, GitHub Actions) are easier to point at a `POST`.
  */
+export async function GET(request: Request): Promise<Response> {
+  return handleDrain(request);
+}
+
 export async function POST(request: Request): Promise<Response> {
+  return handleDrain(request);
+}
+
+async function handleDrain(request: Request): Promise<Response> {
   const secret = process.env.EMAIL_CRON_SECRET;
   if (!secret) {
     return Response.json(
