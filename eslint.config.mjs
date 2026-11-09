@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Build and tooling output (mirrors .gitignore). Linting the bundled
+    // media-streams artifact alone is ~19 MB of generated code and was
+    // enough to exhaust the heap on a constrained machine.
+    "dist/**",
+    "coverage/**",
+    ".playwright-mcp/**",
   ]),
 ]);
 
