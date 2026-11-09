@@ -753,21 +753,34 @@ connections — that service cannot run on Vercel functions.
 
 ### 6. Health check
 
-`GET /api/health` returns `200` with `{"status":"ok"}` when Postgres is
-reachable and `503` when it is not. Point the host's health check or an
-uptime monitor at it. The body intentionally exposes no configuration or
-error detail.
+`GET /api/health` returns `200` when Postgres is reachable and `503` when
+it is not. Point the host's health check or an uptime monitor at it. The
+body is deliberately shallow and stable:
+
+```json
+{ "status": "ok", "checks": { "database": "ok" }, "responseTimeMs": 4 }
+```
+
+A failure returns the same shape with `"status": "unavailable"` and
+`"checks": { "database": "error" }`. It intentionally exposes no
+configuration, table names, or driver messages, so it cannot be used to
+enumerate infrastructure.
 
 ### 7. Post-deploy checklist
 
-1. `GET /api/health` returns `200`.
-2. `GET /` renders and the demo form submits.
-3. `GET /api/v1/agents` without a key returns `401`.
-4. `GET /api/internal/campaigns/tick` without a token returns `401`.
-5. A real inbound call to the Twilio number reaches the agent and appears
+1. Migrations were applied against the production URL
+   (`DATABASE_URL="postgres://…pooled…" npm run db:migrate`) before the new
+   code took traffic.
+2. `GET /api/health` returns `200` with `"status": "ok"`.
+3. `GET /` renders and the demo form submits.
+4. `GET /api/v1/agents` without a key returns `401`.
+5. `GET /api/internal/campaigns/tick` without a token returns `401` (or
+   `404` if `CAMPAIGN_CRON_SECRET` was never set — a `401` here means the
+   secret is configured, which is what you want in production).
+6. A real inbound call to the Twilio number reaches the agent and appears
    under Calls.
-6. A test campaign fires at its scheduled time.
-7. An invitation email arrives (if `EMAIL_API_KEY` and `EMAIL_FROM` are set).
+7. A test campaign fires at its scheduled time.
+8. An invitation email arrives (if `EMAIL_API_KEY` and `EMAIL_FROM` are set).
 
 ## What has NOT been implemented yet
 
@@ -814,24 +827,25 @@ error detail.
 
 ## Verification performed in this environment
 
-- **Full test suite: 221 tests passing across 34 files**, exit code 0, via
-  `npm test` with no extra flags. The forks pool is capped at two workers
+- **Full test suite: 236 tests passing across 36 files**, exit code 0, via
+  `npm test`. The forks pool is capped at two workers
   (`maxWorkers`/`minWorkers` in `vitest.config.ts`) so the suite stays
-  within memory on constrained machines.
+  within memory on constrained machines. On a very memory-tight machine
+  (PGlite runs Postgres in WebAssembly), run
+  `npx vitest run --maxWorkers=1` for a guaranteed clean pass; that is how
+  the 236/236 result above was produced.
 - `npm run typecheck` (`next typegen && tsc --noEmit`): **passes, zero
   errors**, no `any`/`@ts-ignore`/`@ts-expect-error` anywhere in the code.
-- `npm run build` (`next build`): **succeeds**. The route table now includes
-  `/` (the public landing page), `/api/admin/demo-requests`, and
-  `/api/internal/email/outbox`.
-- **ESLint: 0 errors** across `app/`, `components/`, `server/`, `db/`,
-  `lib/`, `tests/` and the root config files. The only 5 remaining
-  warnings are pre-existing (an unused eslint-disable directive in
-  `db/index.ts` and four unused `user` bindings in
-  `tests/server/call-outcome-analytics.test.ts`).
-  **Note:** running ESLint over the *whole* tree in one process still
-  times out on this machine — it is memory-bound, not a lint error.
-  Linting directory-by-directory (`npx eslint app components`, then
-  `server`, then the rest) completes and is clean.
+- `npm run build` (`next build`): **succeeds**, generating 34 routes
+  (marketing, auth, dashboard, the public API, the provider webhooks, the
+  health probe, and both cron triggers).
+- **ESLint: 0 errors** across the whole tree in a single process. The only
+  5 remaining warnings are pre-existing (an unused eslint-disable directive
+  in `db/index.ts` and four unused `user` bindings in
+  `tests/server/call-outcome-analytics.test.ts`). `eslint.config.mjs`
+  ignores `dist/`, `coverage/`, and `.playwright-mcp/` in addition to
+  `.next/`, `out/`, and `build/` — without those ignores, linting the
+  ~19 MB bundled media-streams artifact in `dist/` exhausted the heap.
 - **The landing page was rendered in a real browser** (Playwright) and
   checked end to end: the hero, the "who it's for" section, the six
   capability cards, the campaign section, the four-step onboarding
